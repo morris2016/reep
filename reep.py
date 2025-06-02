@@ -3606,7 +3606,7 @@ if __name__ == "__main__":
     
     🚀 Getting Started:
     1. Install dependencies: pip install PyQt5 pandas numpy scikit-learn ta requests xgboost
-    2. Run the application: python enhanced_binance_ml_trading_app.py
+    2. Run the application: python reep.py
     3. Configure API credentials (use testnet first!)
     4. Select ML model and trading symbol
     5. Start trading and monitor real-time signals
