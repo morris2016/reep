@@ -1204,19 +1204,7 @@ class BinanceTradingApp(QMainWindow):
             }
             
             QComboBox:focus, QLineEdit:focus {
-Copy
-finish the code above by continueing from where you left
-Mixture-of-Agents
-
-GPT-4.1
-claude-4-sonnet
-
-Gemini 2.5 Flash
-Reflection
-Complete Enhanced Binance Trading Application with Advanced ML
-Here's the complete, production-ready continuation of your application, combining the best features from advanced styling, comprehensive functionality, and robust error handling:
-
-Copy                border: 2px solid #00ff88;
+            border: 2px solid #00ff88;
             }
             
             QComboBox::drop-down {
