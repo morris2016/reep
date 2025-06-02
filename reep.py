@@ -23,8 +23,9 @@ from PyQt5.QtWidgets import (
     QTextEdit, QTabWidget, QMessageBox, QFileDialog,
     QProgressBar, QCheckBox
 )
-from PyQt5.QtCore import Qt, QThread, pyqtSignal
-from PyQt5.QtGui import QFont, QColor
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer, QPointF
+from PyQt5.QtGui import QFont, QColor, QPainter, QPen, QPolygonF
+from collections import deque
 
 class EnhancedBinanceAPI:
     """Enhanced Binance API client with robust error handling and historical data"""
@@ -529,6 +530,47 @@ class MLSignalGenerator:
             print(f"Error loading model: {e}")
             return False
 
+
+class PriceChartWidget(QWidget):
+    """Lightweight widget to display live price history as a line chart."""
+
+    def __init__(self, parent=None, max_points=120):
+        super().__init__(parent)
+        self.prices = deque(maxlen=max_points)
+        self.setMinimumHeight(150)
+
+    def add_price(self, price: float) -> None:
+        """Add a new price point and trigger a repaint."""
+        self.prices.append(price)
+        self.update()
+
+    def paintEvent(self, event):  # noqa: D401 - Qt override
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        rect = self.rect()
+        w = rect.width()
+        h = rect.height()
+
+        if len(self.prices) < 2:
+            painter.setPen(QColor(200, 200, 200))
+            painter.drawText(rect, Qt.AlignCenter, "No data")
+            return
+
+        minimum = min(self.prices)
+        maximum = max(self.prices)
+        span = maximum - minimum or 1
+        step = w / (len(self.prices) - 1)
+
+        poly = QPolygonF()
+        for i, price in enumerate(self.prices):
+            x = i * step
+            y = h - ((price - minimum) / span) * h
+            poly.append(QPointF(x, y))
+
+        painter.setPen(QPen(QColor(0, 255, 136), 2))
+        painter.drawPolyline(poly)
+
 class BinanceTradingApp(QMainWindow):
     """Main application with comprehensive ML trading capabilities"""
     
@@ -691,9 +733,11 @@ class BinanceTradingApp(QMainWindow):
         stats_layout.addWidget(self.stats_24h_volume)
         stats_layout.addWidget(self.stats_high_low)
         stats_layout.addWidget(self.stats_trades)
-        
+
         price_layout.addWidget(self.price_display)
         price_layout.addLayout(stats_layout)
+        self.price_chart = PriceChartWidget()
+        price_layout.addWidget(self.price_chart)
         price_group.setLayout(price_layout)
         
         layout.addWidget(price_group)
@@ -1379,9 +1423,11 @@ class BinanceTradingApp(QMainWindow):
                     price_text = f"💰 {data['symbol']}: ${current_price:,.2f}"
                 else:
                     price_text = f"💰 {data['symbol']}: ${current_price:,.4f}"
-                
+
                 self.price_display.setText(price_text)
-                
+                if hasattr(self, 'price_chart'):
+                    self.price_chart.add_price(current_price)
+
                 # Add to price history with trend analysis
                 self.add_enhanced_price_history(current_price, data.get('stats', {}))
             
@@ -1797,8 +1843,10 @@ class BinanceTradingApp(QMainWindow):
                     price_text = f"💰 {data['symbol']}: ${current_price:,.2f}"
                 else:
                     price_text = f"💰 {data['symbol']}: ${current_price:,.4f}"
-                
+
                 self.price_display.setText(price_text)
+                if hasattr(self, 'price_chart'):
+                    self.price_chart.add_price(current_price)
                 self.add_enhanced_price_history(current_price, data.get('stats', {}))
             
             # Update comprehensive market statistics
@@ -2241,8 +2289,10 @@ class BinanceTradingApp(QMainWindow):
                     price_text = f"💰 {data['symbol']}: ${current_price:,.2f}"
                 else:
                     price_text = f"💰 {data['symbol']}: ${current_price:,.4f}"
-                
+
                 self.price_display.setText(price_text)
+                if hasattr(self, 'price_chart'):
+                    self.price_chart.add_price(current_price)
                 self.add_enhanced_price_history(current_price, data.get('stats', {}))
             
             if 'stats' in data and data['stats']:

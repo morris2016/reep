@@ -7,6 +7,7 @@ This project provides an advanced, GUI-based trading bot for Binance that levera
 - Multiple ML models (Random Forest, XGBoost, rule-based fallback)
 - Over 25 technical indicators from the `ta` library
 - Professional dark-themed UI with live updates
+- Real-time price chart widget visualizing recent prices
 - Export of signal history and model persistence
 - Built-in testnet support for safe development and testing
 
@@ -32,3 +33,7 @@ The `main()` function defined in [`reep.py`](./reep.py) performs dependency chec
 ## Notes
 - Always test with the Binance testnet before trading live funds.
 - This project is for educational purposes and does not constitute financial advice.
+
+## License
+This project is licensed under the [MIT License](LICENSE).
+
