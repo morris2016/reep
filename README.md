@@ -11,6 +11,7 @@ This project provides an advanced, GUI-based trading bot for Binance that levera
 - Optional advanced risk management and regime detection modules
 - Experimental online learning optimizer for real-time adaptation
 - Built-in testnet support for safe development and testing
+- Advanced risk management and market regime detection utilities
 
 These features are summarized in the entry point docstring of [`reep.py`](./reep.py) around the `if __name__ == "__main__":` block.
 

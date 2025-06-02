@@ -13,6 +13,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, classification_report
+from sklearn.linear_model import LogisticRegression
 import joblib
 import ta  # Technical Analysis library
 
@@ -280,6 +281,7 @@ class TechnicalAnalyzer:
             print(f"Error in advanced feature engineering: {e}")
             return df
 
+
 class MLSignalGenerator:
     """Advanced ML-based trading signal generator with multiple model support"""
     
@@ -387,7 +389,10 @@ class MLSignalGenerator:
             X_test_scaled = self.scalers[model_type].transform(X_test)
             
             # Initialize model
-            if model_type == "random_forest":
+            if model_type == "advanced_ensemble":
+                self.models[model_type] = AdvancedEnsemble()
+                self.models[model_type].fit(X_train_scaled, y_train)
+            elif model_type == "random_forest":
                 self.models[model_type] = RandomForestClassifier(
                     n_estimators=200,
                     max_depth=15,
@@ -426,7 +431,8 @@ class MLSignalGenerator:
                 return True
             
             # Train model
-            self.models[model_type].fit(X_train_scaled, y_train)
+            if model_type != "advanced_ensemble":
+                self.models[model_type].fit(X_train_scaled, y_train)
             
             # Evaluate
             train_pred = self.models[model_type].predict(X_train_scaled)
@@ -475,6 +481,7 @@ class MLSignalGenerator:
                 else:
                     prediction = 1
                 probabilities = [1 - prob_buy, 0, prob_buy]
+
             else:
                 prediction = self.models[model_type].predict(features_scaled)[0]
                 probabilities = self.models[model_type].predict_proba(features_scaled)[0]
@@ -652,6 +659,7 @@ class AdvancedEnsemble:
 class AdvancedRiskManager:
     """Risk manager using Kelly criterion and adaptive sizing"""
 
+
     def __init__(self, base_risk=0.02):
         self.base_risk = base_risk
         self.max_risk = 0.05
@@ -669,6 +677,7 @@ class AdvancedRiskManager:
 
         pos_size = self.base_risk * kelly_fraction * confidence_multiplier * volatility_adjustment * drawdown_multiplier
         return max(self.min_risk, min(self.max_risk, pos_size))
+
 
     def update_performance(self, trade_result):
         if trade_result < 0:
@@ -710,6 +719,7 @@ class MarketRegimeDetector:
 class OnlineLearningOptimizer:
     """Online learning manager handling concept drift"""
 
+
     def __init__(self, decay_factor=0.95, drift_threshold=0.1):
         self.decay_factor = decay_factor
         self.drift_threshold = drift_threshold
@@ -740,7 +750,6 @@ class OnlineLearningOptimizer:
             if hasattr(model, 'learning_rate'):
                 model.learning_rate *= 1.05
         return model
-
 
 class BinanceTradingApp(QMainWindow):
     """Main application with comprehensive ML trading capabilities"""
