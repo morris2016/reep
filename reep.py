@@ -9,9 +9,11 @@ import threading
 import pandas as pd
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, classification_report
+from sklearn.linear_model import LogisticRegression
 import joblib
 import ta  # Technical Analysis library
 
@@ -26,6 +28,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer, QPointF
 from PyQt5.QtGui import QFont, QColor, QPainter, QPen, QPolygonF
 from collections import deque
+
 
 class EnhancedBinanceAPI:
     """Enhanced Binance API client with robust error handling and historical data"""
@@ -237,6 +240,50 @@ class TechnicalAnalyzer:
             
         return features
 
+    def advanced_feature_engineering(self, df, market_data):
+        """Enhanced feature engineering for 80% accuracy target"""
+        try:
+            df = df.copy()
+
+            # Market microstructure features
+            if {'bid_volume', 'ask_volume'}.issubset(market_data.columns):
+                imbalance = (
+                    market_data['bid_volume'] - market_data['ask_volume']
+                ) / (market_data['bid_volume'] + market_data['ask_volume'])
+                df['order_book_imbalance'] = imbalance
+            else:
+                df['order_book_imbalance'] = 0.0
+
+            # Cross-asset correlations
+            if 'btc_dominance' in market_data.columns:
+                df['btc_dominance_change'] = market_data['btc_dominance'].pct_change()
+            else:
+                df['btc_dominance_change'] = 0.0
+
+            if 'fear_greed' in market_data.columns:
+                df['fear_greed_normalized'] = (market_data['fear_greed'] - 50) / 50
+            else:
+                df['fear_greed_normalized'] = 0.0
+
+            # Time-series decomposition
+            from scipy import signal
+            df['trend_component'] = signal.detrend(df['close']) if 'close' in df.columns else 0.0
+            if 'close' in df.columns:
+                fourier = np.abs(np.fft.fft(df['close'].values))[: len(df) // 2]
+                df['fourier_transform'] = np.mean(fourier)
+            else:
+                df['fourier_transform'] = 0.0
+
+            # Sentiment features - placeholders for real data sources
+            df['sentiment_score'] = 0.0
+            df['whale_movement'] = 0.0
+
+            return df
+        except Exception as e:
+            print(f"Error in advanced feature engineering: {e}")
+            return df
+
+
 class MLSignalGenerator:
     """Advanced ML-based trading signal generator with multiple model support"""
     
@@ -344,7 +391,10 @@ class MLSignalGenerator:
             X_test_scaled = self.scalers[model_type].transform(X_test)
             
             # Initialize model
-            if model_type == "random_forest":
+            if model_type == "advanced_ensemble":
+                self.models[model_type] = AdvancedEnsemble()
+                self.models[model_type].fit(X_train_scaled, y_train)
+            elif model_type == "random_forest":
                 self.models[model_type] = RandomForestClassifier(
                     n_estimators=200,
                     max_depth=15,
@@ -367,9 +417,24 @@ class MLSignalGenerator:
                 except ImportError:
                     print("XGBoost not available, using Random Forest")
                     return self.train_model(historical_data, "random_forest")
+            elif model_type == "advanced_ensemble":
+                self.models[model_type] = AdvancedEnsemble()
+                self.models[model_type].fit(X_train_scaled, y_train)
+                # Evaluate separately
+                train_pred = (self.models[model_type].predict(X_train_scaled) > 0.5).astype(int)
+                test_pred = (self.models[model_type].predict(X_test_scaled) > 0.5).astype(int)
+                train_accuracy = accuracy_score(y_train, train_pred)
+                test_accuracy = accuracy_score(y_test, test_pred)
+                self.training_accuracy = test_accuracy
+                self.feature_importance = []
+                self.is_trained = True
+                print(f"Training accuracy: {train_accuracy:.3f}")
+                print(f"Test accuracy: {test_accuracy:.3f}")
+                return True
             
             # Train model
-            self.models[model_type].fit(X_train_scaled, y_train)
+            if model_type != "advanced_ensemble":
+                self.models[model_type].fit(X_train_scaled, y_train)
             
             # Evaluate
             train_pred = self.models[model_type].predict(X_train_scaled)
@@ -408,9 +473,20 @@ class MLSignalGenerator:
         try:
             features = self.prepare_features(feature_dict)
             features_scaled = self.scalers[model_type].transform(features)
-            
-            prediction = self.models[model_type].predict(features_scaled)[0]
-            probabilities = self.models[model_type].predict_proba(features_scaled)[0]
+
+            if model_type == "advanced_ensemble":
+                prob_buy = float(self.models[model_type].predict(features_scaled))
+                if prob_buy > 0.55:
+                    prediction = 2
+                elif prob_buy < 0.45:
+                    prediction = 0
+                else:
+                    prediction = 1
+                probabilities = [1 - prob_buy, 0, prob_buy]
+
+            else:
+                prediction = self.models[model_type].predict(features_scaled)[0]
+                probabilities = self.models[model_type].predict_proba(features_scaled)[0]
             
             base_confidence = int(np.max(probabilities) * 100)
             
@@ -571,6 +647,7 @@ class PriceChartWidget(QWidget):
         painter.setPen(QPen(QColor(0, 255, 136), 2))
         painter.drawPolyline(poly)
 
+
 class BinanceTradingApp(QMainWindow):
     """Main application with comprehensive ML trading capabilities"""
     
@@ -678,7 +755,12 @@ class BinanceTradingApp(QMainWindow):
         # Model selection
         controls_layout.addWidget(QLabel("ML Model:"))
         self.model_combo = QComboBox()
-        self.model_combo.addItems(["Random Forest", "XGBoost", "Fallback Rules"])
+        self.model_combo.addItems([
+            "Random Forest",
+            "XGBoost",
+            "Advanced Ensemble",
+            "Fallback Rules",
+        ])
         self.model_combo.currentTextChanged.connect(self.on_model_changed)
         controls_layout.addWidget(self.model_combo)
         
@@ -1275,7 +1357,8 @@ class BinanceTradingApp(QMainWindow):
         model_map = {
             "Random Forest": "random_forest",
             "XGBoost": "xgboost",
-            "Fallback Rules": "fallback"
+            "Advanced Ensemble": "advanced_ensemble",
+            "Fallback Rules": "fallback",
         }
         
         new_model = model_map.get(model_text, "random_forest")
@@ -1695,8 +1778,9 @@ class BinanceTradingApp(QMainWindow):
         """Handle ML model selection with comprehensive validation"""
         model_map = {
             "Random Forest": "random_forest",
-            "XGBoost": "xgboost", 
-            "Fallback Rules": "fallback"
+            "XGBoost": "xgboost",
+            "Advanced Ensemble": "advanced_ensemble",
+            "Fallback Rules": "fallback",
         }
         
         new_model = model_map.get(model_text, "random_forest")
@@ -2151,8 +2235,9 @@ class BinanceTradingApp(QMainWindow):
         """Handle ML model selection with comprehensive validation"""
         model_map = {
             "Random Forest": "random_forest",
-            "XGBoost": "xgboost", 
-            "Fallback Rules": "fallback"
+            "XGBoost": "xgboost",
+            "Advanced Ensemble": "advanced_ensemble",
+            "Fallback Rules": "fallback",
         }
         
         new_model = model_map.get(model_text, "random_forest")
