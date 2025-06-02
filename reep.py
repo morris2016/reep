@@ -13,7 +13,6 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, classification_report
-from sklearn.linear_model import LogisticRegression
 import joblib
 import ta  # Technical Analysis library
 
@@ -44,6 +43,19 @@ class EnhancedBinanceAPI:
             "key_type": "HMAC-SHA-256",
             "description": "Enhanced ML Trading Bot"
         }
+
+    def place_order(self, symbol, side, quantity, order_type="MARKET", price=None):
+        """Place a simple order on Binance."""
+        params = {
+            "symbol": symbol,
+            "side": side.upper(),
+            "type": order_type.upper(),
+            "quantity": quantity,
+        }
+        if params["type"] == "LIMIT" and price is not None:
+            params["timeInForce"] = "GTC"
+            params["price"] = price
+        return self._send_request("POST", "/api/v3/order", params=params, signed=True)
     
     def get_server_time(self):
         """Get Binance server time with error handling"""
@@ -276,12 +288,44 @@ class TechnicalAnalyzer:
 
             # Sentiment features - placeholders for real data sources
             df['sentiment_score'] = 0.0
+
             df['whale_movement'] = 0.0
 
             return df
         except Exception as e:
             print(f"Error in advanced feature engineering: {e}")
             return df
+
+
+class AdvancedEnsemble:
+    """Simple ensemble using Random Forest and Logistic Regression."""
+
+    def __init__(self):
+        self.rf = RandomForestClassifier(
+            n_estimators=300,
+            max_depth=10,
+            random_state=42,
+            class_weight="balanced",
+            n_jobs=-1,
+        )
+        self.lr = LogisticRegression(max_iter=1000, multi_class="auto")
+
+    def fit(self, X, y):
+        self.rf.fit(X, y)
+        self.lr.fit(X, y)
+
+    def predict(self, X):
+        rf_probs = self.rf.predict_proba(X)
+        lr_probs = self.lr.predict_proba(X)
+        avg_probs = (rf_probs + lr_probs) / 2
+        if avg_probs.shape[1] >= 3:
+            return avg_probs[:, 2]
+        return avg_probs[:, -1]
+
+    def predict_proba(self, X):
+        rf_probs = self.rf.predict_proba(X)
+        lr_probs = self.lr.predict_proba(X)
+        return (rf_probs + lr_probs) / 2
 
 
 class MLSignalGenerator:
@@ -710,6 +754,11 @@ class BinanceTradingApp(QMainWindow):
         self.analytics_tab = QWidget()
         self.setup_analytics_tab()
         self.tabs.addTab(self.analytics_tab, "📊 Analytics")
+
+        # About Tab with source code access
+        self.about_tab = QWidget()
+        self.setup_about_tab()
+        self.tabs.addTab(self.about_tab, "ℹ️ About")
         
         self.main_layout.addWidget(self.tabs)
         self.central_widget.setLayout(self.main_layout)
@@ -823,7 +872,35 @@ class BinanceTradingApp(QMainWindow):
         price_group.setLayout(price_layout)
         
         layout.addWidget(price_group)
-        
+
+        # Manual trading controls
+        manual_group = QGroupBox("🖐️ Manual Trading")
+        manual_layout = QHBoxLayout()
+
+        self.manual_qty = QLineEdit()
+        self.manual_qty.setPlaceholderText("Quantity")
+        self.manual_price = QLineEdit()
+        self.manual_price.setPlaceholderText("Price (for limit)")
+        self.manual_order_type = QComboBox()
+        self.manual_order_type.addItems(["MARKET", "LIMIT"])
+
+        self.manual_buy_button = QPushButton("Buy")
+        self.manual_sell_button = QPushButton("Sell")
+        self.manual_buy_button.clicked.connect(lambda: self.execute_manual_order("BUY"))
+        self.manual_sell_button.clicked.connect(lambda: self.execute_manual_order("SELL"))
+
+        manual_layout.addWidget(QLabel("Qty:"))
+        manual_layout.addWidget(self.manual_qty)
+        manual_layout.addWidget(QLabel("Price:"))
+        manual_layout.addWidget(self.manual_price)
+        manual_layout.addWidget(QLabel("Type:"))
+        manual_layout.addWidget(self.manual_order_type)
+        manual_layout.addWidget(self.manual_buy_button)
+        manual_layout.addWidget(self.manual_sell_button)
+        manual_group.setLayout(manual_layout)
+
+        layout.addWidget(manual_group)
+
         # Enhanced data tables
         self.setup_enhanced_tables(layout)
         
@@ -1069,6 +1146,27 @@ class BinanceTradingApp(QMainWindow):
         layout.addStretch()
         
         self.analytics_tab.setLayout(layout)
+
+    def setup_about_tab(self):
+        """Setup about page with a button to copy source code."""
+        layout = QVBoxLayout()
+        layout.addWidget(QLabel(
+            "<b>Advanced ML Binance Trading Bot</b><br>Source available for review."))
+        self.copy_code_button = QPushButton("Copy Source Code")
+        self.copy_code_button.clicked.connect(self.copy_source_code)
+        layout.addWidget(self.copy_code_button)
+        layout.addStretch()
+        self.about_tab.setLayout(layout)
+
+    def copy_source_code(self):
+        """Copy full source file to clipboard."""
+        try:
+            with open(__file__, "r", encoding="utf-8") as f:
+                code = f.read()
+            QApplication.clipboard().setText(code)
+            QMessageBox.information(self, "Copy Code", "Source code copied to clipboard")
+        except Exception as e:
+            QMessageBox.warning(self, "Copy Code", f"Failed to copy code: {e}")
     
     def setup_enhanced_tables(self, parent_layout):
         """Setup enhanced data display tables"""
@@ -1490,8 +1588,30 @@ class BinanceTradingApp(QMainWindow):
             self.update_ml_status("🔄 Idle")
             
         except Exception as e:
-            QMessageBox.warning(self, "Stop Error", 
+            QMessageBox.warning(self, "Stop Error",
                 f"Error during shutdown:\n{str(e)}")
+
+    def execute_manual_order(self, side):
+        """Execute a manual trade using current API settings."""
+        qty_text = self.manual_qty.text().strip()
+        if not qty_text:
+            QMessageBox.warning(self, "Manual Trade", "Quantity is required")
+            return
+        try:
+            qty = float(qty_text)
+            order_type = self.manual_order_type.currentText()
+            price = self.manual_price.text().strip()
+            price_val = float(price) if price and order_type == "LIMIT" else None
+            result = self.binance_api.place_order(
+                self.symbol_combo.currentText(), side, qty, order_type, price_val
+            )
+            if "error" in result:
+                QMessageBox.warning(self, "Manual Trade", f"Order failed: {result['error']}")
+            else:
+                status = result.get('status', 'Placed')
+                QMessageBox.information(self, "Manual Trade", f"Order {status}")
+        except ValueError:
+            QMessageBox.warning(self, "Manual Trade", "Invalid number format")
     
     # ===== DATA PROCESSING AND UI UPDATES =====
     
