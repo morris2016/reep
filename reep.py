@@ -12,6 +12,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, classification_report
+from sklearn.linear_model import LogisticRegression
 import joblib
 import ta  # Technical Analysis library
 
@@ -236,6 +237,44 @@ class TechnicalAnalyzer:
             
         return features
 
+    def advanced_feature_engineering(self, df, market_data):
+        """Generate additional features for improved model accuracy"""
+        adv = {}
+        try:
+            # Market microstructure
+            bid_vol = market_data.get('bid_volume', 0)
+            ask_vol = market_data.get('ask_volume', 0)
+            total_vol = bid_vol + ask_vol
+            if total_vol > 0:
+                adv['order_book_imbalance'] = (bid_vol - ask_vol) / total_vol
+            else:
+                adv['order_book_imbalance'] = 0
+
+            # Cross-asset correlations
+            adv['btc_dominance_change'] = market_data.get('btc_dominance', 0)
+            adv['fear_greed_normalized'] = (
+                market_data.get('fear_greed', 50) - 50
+            ) / 50
+
+            # Time-series decomposition
+            from scipy import signal
+            adv['trend_component'] = signal.detrend(df['Close'])[-1]
+            ft = np.abs(np.fft.fft(df['Close'].values))
+            adv['fourier_transform'] = ft[: len(ft) // 2].mean()
+
+            # Sentiment features (placeholders for integration)
+            adv['sentiment_score'] = market_data.get('sentiment', 0)
+            adv['whale_movement'] = market_data.get('whale_moves', 0)
+
+            for k, v in adv.items():
+                if pd.isna(v) or np.isinf(v):
+                    adv[k] = 0
+        except Exception as e:
+            print(f"Advanced feature error: {e}")
+            return {}
+
+        return adv
+
 class MLSignalGenerator:
     """Advanced ML-based trading signal generator with multiple model support"""
     
@@ -343,7 +382,10 @@ class MLSignalGenerator:
             X_test_scaled = self.scalers[model_type].transform(X_test)
             
             # Initialize model
-            if model_type == "random_forest":
+            if model_type == "advanced_ensemble":
+                self.models[model_type] = AdvancedEnsemble()
+                self.models[model_type].fit(X_train_scaled, y_train)
+            elif model_type == "random_forest":
                 self.models[model_type] = RandomForestClassifier(
                     n_estimators=200,
                     max_depth=15,
@@ -368,7 +410,8 @@ class MLSignalGenerator:
                     return self.train_model(historical_data, "random_forest")
             
             # Train model
-            self.models[model_type].fit(X_train_scaled, y_train)
+            if model_type != "advanced_ensemble":
+                self.models[model_type].fit(X_train_scaled, y_train)
             
             # Evaluate
             train_pred = self.models[model_type].predict(X_train_scaled)
@@ -408,8 +451,13 @@ class MLSignalGenerator:
             features = self.prepare_features(feature_dict)
             features_scaled = self.scalers[model_type].transform(features)
             
-            prediction = self.models[model_type].predict(features_scaled)[0]
-            probabilities = self.models[model_type].predict_proba(features_scaled)[0]
+            if model_type == "advanced_ensemble":
+                proba = self.models[model_type].predict_proba(features_scaled)[0]
+                prediction = 2 if proba > 0.55 else (0 if proba < 0.45 else 1)
+                probabilities = [1-proba, 1-proba, proba]
+            else:
+                prediction = self.models[model_type].predict(features_scaled)[0]
+                probabilities = self.models[model_type].predict_proba(features_scaled)[0]
             
             base_confidence = int(np.max(probabilities) * 100)
             
@@ -528,6 +576,118 @@ class MLSignalGenerator:
         except Exception as e:
             print(f"Error loading model: {e}")
             return False
+
+
+class AdvancedEnsemble:
+    """Ensemble model combining multiple algorithms"""
+
+    def __init__(self):
+        self.models = {
+            'rf': RandomForestClassifier(n_estimators=500, max_depth=20),
+        }
+        try:
+            from xgboost import XGBClassifier
+            self.models['xgb'] = XGBClassifier(n_estimators=300, learning_rate=0.01)
+        except Exception:
+            pass
+        try:
+            from lightgbm import LGBMClassifier
+            self.models['lgb'] = LGBMClassifier(n_estimators=400, num_leaves=50)
+        except Exception:
+            pass
+
+        self.meta_model = LogisticRegression(max_iter=500)
+        self.weights = {name: 1 / len(self.models) for name in self.models}
+
+    def fit(self, X, y):
+        meta_features = []
+        for name, model in self.models.items():
+            model.fit(X, y)
+            meta_features.append(model.predict_proba(X)[:, 1])
+        meta_features = np.column_stack(meta_features)
+        self.meta_model.fit(meta_features, y)
+
+    def predict_proba(self, X):
+        predictions = []
+        for name, model in self.models.items():
+            prob = model.predict_proba(X)[:, 1]
+            predictions.append(prob * self.weights.get(name, 0))
+        weighted = np.sum(predictions, axis=0)
+        meta_features = np.column_stack([m.predict_proba(X)[:, 1] for m in self.models.values()])
+        meta_prob = self.meta_model.predict_proba(meta_features)[:, 1]
+        return 0.7 * weighted + 0.3 * meta_prob
+
+
+class AdvancedRiskManager:
+    """Dynamic position sizing using Kelly criterion"""
+
+    def __init__(self, base_risk=0.02):
+        self.base_risk = base_risk
+        self.max_risk = 0.05
+        self.min_risk = 0.005
+        self.consecutive_losses = 0
+        self.max_consecutive_losses = 3
+
+    def calculate_position_size(self, signal_confidence, market_volatility, win_rate, avg_ratio):
+        kelly = ((win_rate * avg_ratio) - (1 - win_rate)) / max(avg_ratio, 1e-6)
+        kelly = max(0, min(kelly, 0.25))
+        confidence_mult = signal_confidence / 100
+        vol_adjust = max(0.5, 1 - (market_volatility - 0.02) * 10)
+        drawdown_mult = max(0.3, 1 - (self.consecutive_losses * 0.2))
+        size = self.base_risk * kelly * confidence_mult * vol_adjust * drawdown_mult
+        return max(self.min_risk, min(self.max_risk, size))
+
+    def update_performance(self, trade_result):
+        if trade_result < 0:
+            self.consecutive_losses += 1
+        else:
+            self.consecutive_losses = 0
+
+
+class MarketRegimeDetector:
+    """Detect market regimes for strategy weighting"""
+
+    def __init__(self, lookback_period=50):
+        self.lookback = lookback_period
+
+    def detect_regime(self, prices):
+        returns = prices.pct_change().dropna()
+        volatility = returns.rolling(20).std().iloc[-1]
+        trend = abs(returns.rolling(20).mean().iloc[-1])
+        if volatility > 0.05:
+            return 'volatile'
+        if trend > 0.02:
+            return 'trending_up' if returns.rolling(5).mean().iloc[-1] > 0 else 'trending_down'
+        return 'ranging'
+
+
+class OnlineLearningOptimizer:
+    """Incremental model updater with concept drift detection"""
+
+    def __init__(self, decay_factor=0.95, drift_threshold=0.1):
+        self.decay_factor = decay_factor
+        self.drift_threshold = drift_threshold
+        self.performance_history = []
+
+    def evaluate(self, model, X, y):
+        pred = model.predict(X)
+        return accuracy_score(y, pred)
+
+    def update(self, model, X_new, y_new):
+        perf = self.evaluate(model, X_new, y_new)
+        self.performance_history.append(perf)
+        if self.detect_drift():
+            model.fit(X_new, y_new)
+        else:
+            if hasattr(model, 'partial_fit'):
+                model.partial_fit(X_new, y_new)
+
+    def detect_drift(self, window=50):
+        if len(self.performance_history) < window * 2:
+            return False
+        recent = np.mean(self.performance_history[-window:])
+        history = np.mean(self.performance_history[-window*2:-window])
+        return history - recent > self.drift_threshold
 
 class BinanceTradingApp(QMainWindow):
     """Main application with comprehensive ML trading capabilities"""
