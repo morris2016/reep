@@ -7,6 +7,7 @@ This project provides an advanced, GUI-based trading bot for Binance that levera
 - Multiple ML models (Random Forest, XGBoost, Advanced Ensemble, rule-based fallback)
 - Over 25 technical indicators from the `ta` library
 - Professional dark-themed UI with live updates
+- Real-time price chart widget visualizing recent prices
 - Export of signal history and model persistence
 - Optional advanced risk management and regime detection modules
 - Experimental online learning optimizer for real-time adaptation
