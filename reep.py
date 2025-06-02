@@ -44,6 +44,19 @@ class EnhancedBinanceAPI:
             "key_type": "HMAC-SHA-256",
             "description": "Enhanced ML Trading Bot"
         }
+
+    def place_order(self, symbol, side, quantity, order_type="MARKET", price=None):
+        """Place a simple order on Binance."""
+        params = {
+            "symbol": symbol,
+            "side": side.upper(),
+            "type": order_type.upper(),
+            "quantity": quantity,
+        }
+        if params["type"] == "LIMIT" and price is not None:
+            params["timeInForce"] = "GTC"
+            params["price"] = price
+        return self._send_request("POST", "/api/v3/order", params=params, signed=True)
     
     def get_server_time(self):
         """Get Binance server time with error handling"""
@@ -96,8 +109,11 @@ class EnhancedBinanceAPI:
         except requests.exceptions.HTTPError as e:
             try:
                 error_data = e.response.json()
-                return {"error": f"API Error: {error_data.get('msg', 'Unknown error')}"}
-            except:
+                msg = error_data.get('msg', 'Unknown error')
+                if 'API-key' in msg or 'permissions' in msg:
+                    return {"error": "Authentication failed: Invalid API key or permissions"}
+                return {"error": f"API Error: {msg}"}
+            except Exception:
                 return {"error": f"HTTP Error {e.response.status_code}"}
         except Exception as e:
             return {"error": f"Unexpected error: {str(e)}"}
@@ -710,6 +726,11 @@ class BinanceTradingApp(QMainWindow):
         self.analytics_tab = QWidget()
         self.setup_analytics_tab()
         self.tabs.addTab(self.analytics_tab, "📊 Analytics")
+
+        # About Tab with source code access
+        self.about_tab = QWidget()
+        self.setup_about_tab()
+        self.tabs.addTab(self.about_tab, "ℹ️ About")
         
         self.main_layout.addWidget(self.tabs)
         self.central_widget.setLayout(self.main_layout)
@@ -823,7 +844,35 @@ class BinanceTradingApp(QMainWindow):
         price_group.setLayout(price_layout)
         
         layout.addWidget(price_group)
-        
+
+        # Manual trading controls
+        manual_group = QGroupBox("🖐️ Manual Trading")
+        manual_layout = QHBoxLayout()
+
+        self.manual_qty = QLineEdit()
+        self.manual_qty.setPlaceholderText("Quantity")
+        self.manual_price = QLineEdit()
+        self.manual_price.setPlaceholderText("Price (for limit)")
+        self.manual_order_type = QComboBox()
+        self.manual_order_type.addItems(["MARKET", "LIMIT"])
+
+        self.manual_buy_button = QPushButton("Buy")
+        self.manual_sell_button = QPushButton("Sell")
+        self.manual_buy_button.clicked.connect(lambda: self.execute_manual_order("BUY"))
+        self.manual_sell_button.clicked.connect(lambda: self.execute_manual_order("SELL"))
+
+        manual_layout.addWidget(QLabel("Qty:"))
+        manual_layout.addWidget(self.manual_qty)
+        manual_layout.addWidget(QLabel("Price:"))
+        manual_layout.addWidget(self.manual_price)
+        manual_layout.addWidget(QLabel("Type:"))
+        manual_layout.addWidget(self.manual_order_type)
+        manual_layout.addWidget(self.manual_buy_button)
+        manual_layout.addWidget(self.manual_sell_button)
+        manual_group.setLayout(manual_layout)
+
+        layout.addWidget(manual_group)
+
         # Enhanced data tables
         self.setup_enhanced_tables(layout)
         
@@ -1069,6 +1118,27 @@ class BinanceTradingApp(QMainWindow):
         layout.addStretch()
         
         self.analytics_tab.setLayout(layout)
+
+    def setup_about_tab(self):
+        """Setup about page with a button to copy source code."""
+        layout = QVBoxLayout()
+        layout.addWidget(QLabel(
+            "<b>Advanced ML Binance Trading Bot</b><br>Source available for review."))
+        self.copy_code_button = QPushButton("Copy Source Code")
+        self.copy_code_button.clicked.connect(self.copy_source_code)
+        layout.addWidget(self.copy_code_button)
+        layout.addStretch()
+        self.about_tab.setLayout(layout)
+
+    def copy_source_code(self):
+        """Copy full source file to clipboard."""
+        try:
+            with open(__file__, "r", encoding="utf-8") as f:
+                code = f.read()
+            QApplication.clipboard().setText(code)
+            QMessageBox.information(self, "Copy Code", "Source code copied to clipboard")
+        except Exception as e:
+            QMessageBox.warning(self, "Copy Code", f"Failed to copy code: {e}")
     
     def setup_enhanced_tables(self, parent_layout):
         """Setup enhanced data display tables"""
@@ -1490,8 +1560,30 @@ class BinanceTradingApp(QMainWindow):
             self.update_ml_status("🔄 Idle")
             
         except Exception as e:
-            QMessageBox.warning(self, "Stop Error", 
+            QMessageBox.warning(self, "Stop Error",
                 f"Error during shutdown:\n{str(e)}")
+
+    def execute_manual_order(self, side):
+        """Execute a manual trade using current API settings."""
+        qty_text = self.manual_qty.text().strip()
+        if not qty_text:
+            QMessageBox.warning(self, "Manual Trade", "Quantity is required")
+            return
+        try:
+            qty = float(qty_text)
+            order_type = self.manual_order_type.currentText()
+            price = self.manual_price.text().strip()
+            price_val = float(price) if price and order_type == "LIMIT" else None
+            result = self.binance_api.place_order(
+                self.symbol_combo.currentText(), side, qty, order_type, price_val
+            )
+            if "error" in result:
+                QMessageBox.warning(self, "Manual Trade", f"Order failed: {result['error']}")
+            else:
+                status = result.get('status', 'Placed')
+                QMessageBox.information(self, "Manual Trade", f"Order {status}")
+        except ValueError:
+            QMessageBox.warning(self, "Manual Trade", "Invalid number format")
     
     # ===== DATA PROCESSING AND UI UPDATES =====
     
@@ -3043,17 +3135,22 @@ class BinanceTradingApp(QMainWindow):
             
             # Test 2: API credentials validation
             account_info = self.binance_api.get_account_info()
-            
+
             if "error" in account_info:
                 error_msg = account_info.get('error', 'Unknown error')
                 self.update_connection_status(f"❌ API Error: {error_msg}")
-                QMessageBox.critical(self, "Connection Test", 
-                    f"❌ API Authentication Failed\n\n"
-                    f"Error: {error_msg}\n\n"
-                    f"Please verify:\n"
-                    f"• API key and secret are correct\n"
-                    f"• API permissions are properly set\n"
-                    f"• Using correct environment (testnet/live)")
+
+                if "Authentication failed" in error_msg or "Invalid API key" in error_msg:
+                    hint = ("Your API key or permissions appear invalid.\n\n"
+                            "Check that the key/secret are correct and that the IP is whitelisted ")
+                else:
+                    hint = "Please verify your credentials and network settings."
+
+                QMessageBox.critical(
+                    self,
+                    "Connection Test",
+                    f"❌ API Authentication Failed\n\nError: {error_msg}\n\n{hint}"
+                )
             else:
                 self.update_connection_status("✅ API connection verified")
                 
