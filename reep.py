@@ -44,6 +44,19 @@ class EnhancedBinanceAPI:
             "key_type": "HMAC-SHA-256",
             "description": "Enhanced ML Trading Bot"
         }
+
+    def place_order(self, symbol, side, quantity, order_type="MARKET", price=None):
+        """Place a simple order on Binance."""
+        params = {
+            "symbol": symbol,
+            "side": side.upper(),
+            "type": order_type.upper(),
+            "quantity": quantity,
+        }
+        if params["type"] == "LIMIT" and price is not None:
+            params["timeInForce"] = "GTC"
+            params["price"] = price
+        return self._send_request("POST", "/api/v3/order", params=params, signed=True)
     
     def get_server_time(self):
         """Get Binance server time with error handling"""
@@ -417,6 +430,33 @@ class MLSignalGenerator:
                 except ImportError:
                     print("XGBoost not available, using Random Forest")
                     return self.train_model(historical_data, "random_forest")
+            elif model_type == "council":
+                rf = RandomForestClassifier(
+                    n_estimators=150,
+                    max_depth=12,
+                    random_state=42,
+                    class_weight='balanced',
+                )
+                lr = LogisticRegression(max_iter=200)
+                rf.fit(X_train_scaled, y_train)
+                lr.fit(X_train_scaled, y_train)
+                self.models[model_type] = {'rf': rf, 'lr': lr}
+                # Evaluate council
+                def vote(pred_a, pred_b):
+                    return [pa if pa==pb else pa for pa,pb in zip(pred_a,pred_b)]
+                train_pred = vote(rf.predict(X_train_scaled), lr.predict(X_train_scaled))
+                test_pred = vote(rf.predict(X_test_scaled), lr.predict(X_test_scaled))
+                train_accuracy = accuracy_score(y_train, train_pred)
+                test_accuracy = accuracy_score(y_test, test_pred)
+                self.training_accuracy = test_accuracy
+                if hasattr(rf, 'feature_importances_'):
+                    importances = rf.feature_importances_
+                    self.feature_importance = list(zip(self.feature_names, importances))
+                    self.feature_importance.sort(key=lambda x: x[1], reverse=True)
+                self.is_trained = True
+                print(f"Training accuracy: {train_accuracy:.3f}")
+                print(f"Test accuracy: {test_accuracy:.3f}")
+                return True
             elif model_type == "advanced_ensemble":
                 self.models[model_type] = AdvancedEnsemble()
                 self.models[model_type].fit(X_train_scaled, y_train)
@@ -483,7 +523,15 @@ class MLSignalGenerator:
                 else:
                     prediction = 1
                 probabilities = [1 - prob_buy, 0, prob_buy]
-
+            elif model_type == "council":
+                rf = self.models[model_type]['rf']
+                lr = self.models[model_type]['lr']
+                pred_rf = rf.predict(features_scaled)[0]
+                pred_lr = lr.predict(features_scaled)[0]
+                prediction = pred_rf if pred_rf == pred_lr else pred_rf
+                prob_rf = rf.predict_proba(features_scaled)[0]
+                prob_lr = lr.predict_proba(features_scaled)[0]
+                probabilities = (prob_rf + prob_lr) / 2
             else:
                 prediction = self.models[model_type].predict(features_scaled)[0]
                 probabilities = self.models[model_type].predict_proba(features_scaled)[0]
@@ -648,6 +696,55 @@ class PriceChartWidget(QWidget):
         painter.drawPolyline(poly)
 
 
+class CandlestickChartWidget(QWidget):
+    """Widget to display OHLC data as candlesticks."""
+
+    def __init__(self, parent=None, max_candles=120):
+        super().__init__(parent)
+        self.candles = deque(maxlen=max_candles)
+        self.setMinimumHeight(150)
+
+    def add_candle(self, o, h, l, c):
+        """Add a candlestick and repaint."""
+        self.candles.append((o, h, l, c))
+        self.update()
+
+    def paintEvent(self, event):  # noqa: D401 - Qt override
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        rect = self.rect()
+        w = rect.width()
+        h = rect.height()
+
+        if not self.candles:
+            painter.setPen(QColor(200, 200, 200))
+            painter.drawText(rect, Qt.AlignCenter, "No data")
+            return
+
+        high = max(c[1] for c in self.candles)
+        low = min(c[2] for c in self.candles)
+        span = high - low or 1
+        step = w / len(self.candles)
+
+        for i, (o, hi, lo, c) in enumerate(self.candles):
+            x = i * step + step / 2
+            y_open = h - ((o - low) / span) * h
+            y_close = h - ((c - low) / span) * h
+            y_high = h - ((hi - low) / span) * h
+            y_low = h - ((lo - low) / span) * h
+
+            color = QColor(0, 255, 136) if c >= o else QColor(255, 68, 68)
+            painter.setPen(QPen(color, 2))
+            painter.drawLine(QPointF(x, y_high), QPointF(x, y_low))
+
+            rect_x = x - step * 0.3
+            rect_w = step * 0.6
+            rect_y = min(y_open, y_close)
+            rect_h = abs(y_close - y_open) or 1
+            painter.fillRect(rect_x, rect_y, rect_w, rect_h, color)
+
+
 class BinanceTradingApp(QMainWindow):
     """Main application with comprehensive ML trading capabilities"""
     
@@ -710,6 +807,11 @@ class BinanceTradingApp(QMainWindow):
         self.analytics_tab = QWidget()
         self.setup_analytics_tab()
         self.tabs.addTab(self.analytics_tab, "📊 Analytics")
+
+        # About Tab with source code access
+        self.about_tab = QWidget()
+        self.setup_about_tab()
+        self.tabs.addTab(self.about_tab, "ℹ️ About")
         
         self.main_layout.addWidget(self.tabs)
         self.central_widget.setLayout(self.main_layout)
@@ -759,6 +861,7 @@ class BinanceTradingApp(QMainWindow):
             "Random Forest",
             "XGBoost",
             "Advanced Ensemble",
+            "Council",
             "Fallback Rules",
         ])
         self.model_combo.currentTextChanged.connect(self.on_model_changed)
@@ -819,11 +922,54 @@ class BinanceTradingApp(QMainWindow):
         price_layout.addWidget(self.price_display)
         price_layout.addLayout(stats_layout)
         self.price_chart = PriceChartWidget()
+        self.candlestick_chart = CandlestickChartWidget()
         price_layout.addWidget(self.price_chart)
+        price_layout.addWidget(self.candlestick_chart)
         price_group.setLayout(price_layout)
-        
+
         layout.addWidget(price_group)
-        
+
+        # Auto trading controls
+        auto_group = QGroupBox("🤖 Auto Trading")
+        auto_layout = QHBoxLayout()
+        self.auto_trade_checkbox = QCheckBox("Enable Auto")
+        self.auto_trade_qty = QLineEdit()
+        self.auto_trade_qty.setPlaceholderText("Qty")
+        auto_layout.addWidget(self.auto_trade_checkbox)
+        auto_layout.addWidget(QLabel("Qty:"))
+        auto_layout.addWidget(self.auto_trade_qty)
+        auto_group.setLayout(auto_layout)
+
+        layout.addWidget(auto_group)
+
+        # Manual trading controls
+        manual_group = QGroupBox("🖐️ Manual Trading")
+        manual_layout = QHBoxLayout()
+
+        self.manual_qty = QLineEdit()
+        self.manual_qty.setPlaceholderText("Quantity")
+        self.manual_price = QLineEdit()
+        self.manual_price.setPlaceholderText("Price (for limit)")
+        self.manual_order_type = QComboBox()
+        self.manual_order_type.addItems(["MARKET", "LIMIT"])
+
+        self.manual_buy_button = QPushButton("Buy")
+        self.manual_sell_button = QPushButton("Sell")
+        self.manual_buy_button.clicked.connect(lambda: self.execute_manual_order("BUY"))
+        self.manual_sell_button.clicked.connect(lambda: self.execute_manual_order("SELL"))
+
+        manual_layout.addWidget(QLabel("Qty:"))
+        manual_layout.addWidget(self.manual_qty)
+        manual_layout.addWidget(QLabel("Price:"))
+        manual_layout.addWidget(self.manual_price)
+        manual_layout.addWidget(QLabel("Type:"))
+        manual_layout.addWidget(self.manual_order_type)
+        manual_layout.addWidget(self.manual_buy_button)
+        manual_layout.addWidget(self.manual_sell_button)
+        manual_group.setLayout(manual_layout)
+
+        layout.addWidget(manual_group)
+
         # Enhanced data tables
         self.setup_enhanced_tables(layout)
         
@@ -1069,6 +1215,27 @@ class BinanceTradingApp(QMainWindow):
         layout.addStretch()
         
         self.analytics_tab.setLayout(layout)
+
+    def setup_about_tab(self):
+        """Setup about page with a button to copy source code."""
+        layout = QVBoxLayout()
+        layout.addWidget(QLabel(
+            "<b>Advanced ML Binance Trading Bot</b><br>Source available for review."))
+        self.copy_code_button = QPushButton("Copy Source Code")
+        self.copy_code_button.clicked.connect(self.copy_source_code)
+        layout.addWidget(self.copy_code_button)
+        layout.addStretch()
+        self.about_tab.setLayout(layout)
+
+    def copy_source_code(self):
+        """Copy full source file to clipboard."""
+        try:
+            with open(__file__, "r", encoding="utf-8") as f:
+                code = f.read()
+            QApplication.clipboard().setText(code)
+            QMessageBox.information(self, "Copy Code", "Source code copied to clipboard")
+        except Exception as e:
+            QMessageBox.warning(self, "Copy Code", f"Failed to copy code: {e}")
     
     def setup_enhanced_tables(self, parent_layout):
         """Setup enhanced data display tables"""
@@ -1358,6 +1525,7 @@ class BinanceTradingApp(QMainWindow):
             "Random Forest": "random_forest",
             "XGBoost": "xgboost",
             "Advanced Ensemble": "advanced_ensemble",
+            "Council": "council",
             "Fallback Rules": "fallback",
         }
         
@@ -1490,8 +1658,45 @@ class BinanceTradingApp(QMainWindow):
             self.update_ml_status("🔄 Idle")
             
         except Exception as e:
-            QMessageBox.warning(self, "Stop Error", 
+            QMessageBox.warning(self, "Stop Error",
                 f"Error during shutdown:\n{str(e)}")
+
+    def execute_manual_order(self, side):
+        """Execute a manual trade using current API settings."""
+        qty_text = self.manual_qty.text().strip()
+        if not qty_text:
+            QMessageBox.warning(self, "Manual Trade", "Quantity is required")
+            return
+        try:
+            qty = float(qty_text)
+            order_type = self.manual_order_type.currentText()
+            price = self.manual_price.text().strip()
+            price_val = float(price) if price and order_type == "LIMIT" else None
+            result = self.binance_api.place_order(
+                self.symbol_combo.currentText(), side, qty, order_type, price_val
+            )
+            if "error" in result:
+                QMessageBox.warning(self, "Manual Trade", f"Order failed: {result['error']}")
+            else:
+                status = result.get('status', 'Placed')
+                QMessageBox.information(self, "Manual Trade", f"Order {status}")
+        except ValueError:
+            QMessageBox.warning(self, "Manual Trade", "Invalid number format")
+
+    def auto_trade_signal(self, side):
+        """Place an automatic market order based on ML signal."""
+        qty_text = self.auto_trade_qty.text().strip()
+        if not qty_text:
+            return
+        try:
+            qty = float(qty_text)
+        except ValueError:
+            return
+        result = self.binance_api.place_order(
+            self.symbol_combo.currentText(), side, qty
+        )
+        if "error" in result:
+            print(f"Auto trade failed: {result['error']}")
     
     # ===== DATA PROCESSING AND UI UPDATES =====
     
@@ -1510,6 +1715,11 @@ class BinanceTradingApp(QMainWindow):
                 self.price_display.setText(price_text)
                 if hasattr(self, 'price_chart'):
                     self.price_chart.add_price(current_price)
+                if 'candle' in data and data['candle'] and hasattr(self, 'candlestick_chart'):
+                    c = data['candle']
+                    self.candlestick_chart.add_candle(
+                        float(c['Open']), float(c['High']), float(c['Low']), float(c['Close'])
+                    )
 
                 # Add to price history with trend analysis
                 self.add_enhanced_price_history(current_price, data.get('stats', {}))
@@ -1735,6 +1945,11 @@ class BinanceTradingApp(QMainWindow):
             self.ml_signals_table.setItem(0, 6, QTableWidgetItem(
                 "✅" if signal_data.get('is_ml_trained', False) else "❌"
             ))
+
+            # Auto trade if enabled
+            if (self.auto_trade_checkbox.isChecked() and
+                signal_text in ("BUY", "SELL") and confidence >= 75):
+                self.auto_trade_signal(signal_text)
             
             # Update analytics
             self.update_signal_analytics(signal_data)
@@ -1780,6 +1995,7 @@ class BinanceTradingApp(QMainWindow):
             "Random Forest": "random_forest",
             "XGBoost": "xgboost",
             "Advanced Ensemble": "advanced_ensemble",
+            "Council": "council",
             "Fallback Rules": "fallback",
         }
         
@@ -2237,6 +2453,7 @@ class BinanceTradingApp(QMainWindow):
             "Random Forest": "random_forest",
             "XGBoost": "xgboost",
             "Advanced Ensemble": "advanced_ensemble",
+            "Council": "council",
             "Fallback Rules": "fallback",
         }
         
@@ -3462,6 +3679,12 @@ class EnhancedDataWorker(QThread):
                 if "error" not in price_data and "error" not in stats_data:
                     # Reset error counter on successful data fetch
                     consecutive_errors = 0
+
+                    # Latest candlestick
+                    candle_df = self.binance_api.get_historical_klines(self.symbol, "1m", 2)
+                    candle_dict = None
+                    if "error" not in candle_df and not candle_df.empty:
+                        candle_dict = candle_df.iloc[-1].to_dict()
                     
                     # Update historical buffer periodically
                     if self.update_counter % 12 == 0:  # Every 12 iterations (1 minute)
@@ -3500,6 +3723,7 @@ class EnhancedDataWorker(QThread):
                         'symbol': self.symbol,
                         'price': price_data,
                         'stats': stats_data,
+                        'candle': candle_dict,
                         'timestamp': datetime.datetime.now(),
                         'update_count': self.update_counter,
                         'ml_active': self.ml_generator.is_trained,
