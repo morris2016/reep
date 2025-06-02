@@ -23,7 +23,7 @@ from PyQt5.QtWidgets import (
     QTextEdit, QTabWidget, QMessageBox, QFileDialog,
     QProgressBar, QCheckBox
 )
-from PyQt5.QtCore import Qt, QThread, pyqtSignal
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt5.QtGui import QFont, QColor
 
 class EnhancedBinanceAPI:
