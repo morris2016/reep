@@ -706,6 +706,7 @@ class CandlestickChartWidget(QWidget):
 
     def add_candle(self, o, h, l, c):
         """Add a candlestick and repaint."""
+
         self.candles.append((o, h, l, c))
         self.update()
 
@@ -921,6 +922,8 @@ class BinanceTradingApp(QMainWindow):
 
         price_layout.addWidget(self.price_display)
         price_layout.addLayout(stats_layout)
+        self.candle_chart = CandlestickChartWidget()
+        price_layout.addWidget(self.candle_chart)
         self.price_chart = PriceChartWidget()
         self.candlestick_chart = CandlestickChartWidget()
         price_layout.addWidget(self.price_chart)
@@ -1685,6 +1688,7 @@ class BinanceTradingApp(QMainWindow):
 
     def auto_trade_signal(self, side):
         """Place an automatic market order based on ML signal."""
+
         qty_text = self.auto_trade_qty.text().strip()
         if not qty_text:
             return
@@ -1697,6 +1701,7 @@ class BinanceTradingApp(QMainWindow):
         )
         if "error" in result:
             print(f"Auto trade failed: {result['error']}")
+
     
     # ===== DATA PROCESSING AND UI UPDATES =====
     
@@ -2147,6 +2152,11 @@ class BinanceTradingApp(QMainWindow):
                 self.price_display.setText(price_text)
                 if hasattr(self, 'price_chart'):
                     self.price_chart.add_price(current_price)
+                if 'ohlc' in data and hasattr(self, 'candle_chart') and data['ohlc']:
+                    ohlc = data['ohlc']
+                    self.candle_chart.add_candle(
+                        ohlc['open'], ohlc['high'], ohlc['low'], ohlc['close']
+                    )
                 self.add_enhanced_price_history(current_price, data.get('stats', {}))
             
             # Update comprehensive market statistics
@@ -2798,7 +2808,11 @@ class BinanceTradingApp(QMainWindow):
             self.ml_signals_table.setItem(0, 6, QTableWidgetItem(
                 "✅" if signal_data.get('is_ml_trained', False) else "❌"
             ))
-            
+
+            if (self.auto_trade_checkbox.isChecked() and
+                signal_text in ["BUY", "SELL"]):
+                self.auto_trade(signal_text, signal_data['price'])
+
             self.update_signal_analytics(signal_data)
             
             for table in [self.signals_table, self.ml_signals_table]:
@@ -3719,6 +3733,16 @@ class EnhancedDataWorker(QThread):
                             self.ml_signal_generated.emit(signal_data)
                     
                     # Emit regular data update with comprehensive metadata
+                    ohlc = None
+                    if self.historical_buffer is not None and not self.historical_buffer.empty:
+                        last = self.historical_buffer.iloc[-1]
+                        ohlc = {
+                            'open': float(last['Open']),
+                            'high': float(last['High']),
+                            'low': float(last['Low']),
+                            'close': float(last['Close'])
+                        }
+
                     combined_data = {
                         'symbol': self.symbol,
                         'price': price_data,
