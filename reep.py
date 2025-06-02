@@ -13,7 +13,6 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, classification_report
-from sklearn.linear_model import LogisticRegression
 import joblib
 import ta  # Technical Analysis library
 
@@ -289,12 +288,44 @@ class TechnicalAnalyzer:
 
             # Sentiment features - placeholders for real data sources
             df['sentiment_score'] = 0.0
+
             df['whale_movement'] = 0.0
 
             return df
         except Exception as e:
             print(f"Error in advanced feature engineering: {e}")
             return df
+
+
+class AdvancedEnsemble:
+    """Simple ensemble using Random Forest and Logistic Regression."""
+
+    def __init__(self):
+        self.rf = RandomForestClassifier(
+            n_estimators=300,
+            max_depth=10,
+            random_state=42,
+            class_weight="balanced",
+            n_jobs=-1,
+        )
+        self.lr = LogisticRegression(max_iter=1000, multi_class="auto")
+
+    def fit(self, X, y):
+        self.rf.fit(X, y)
+        self.lr.fit(X, y)
+
+    def predict(self, X):
+        rf_probs = self.rf.predict_proba(X)
+        lr_probs = self.lr.predict_proba(X)
+        avg_probs = (rf_probs + lr_probs) / 2
+        if avg_probs.shape[1] >= 3:
+            return avg_probs[:, 2]
+        return avg_probs[:, -1]
+
+    def predict_proba(self, X):
+        rf_probs = self.rf.predict_proba(X)
+        lr_probs = self.lr.predict_proba(X)
+        return (rf_probs + lr_probs) / 2
 
 
 class MLSignalGenerator:
@@ -931,19 +962,6 @@ class BinanceTradingApp(QMainWindow):
         price_group.setLayout(price_layout)
 
         layout.addWidget(price_group)
-
-        # Auto trading controls
-        auto_group = QGroupBox("🤖 Auto Trading")
-        auto_layout = QHBoxLayout()
-        self.auto_trade_checkbox = QCheckBox("Enable Auto")
-        self.auto_trade_qty = QLineEdit()
-        self.auto_trade_qty.setPlaceholderText("Qty")
-        auto_layout.addWidget(self.auto_trade_checkbox)
-        auto_layout.addWidget(QLabel("Qty:"))
-        auto_layout.addWidget(self.auto_trade_qty)
-        auto_group.setLayout(auto_layout)
-
-        layout.addWidget(auto_group)
 
         # Manual trading controls
         manual_group = QGroupBox("🖐️ Manual Trading")
@@ -1685,23 +1703,6 @@ class BinanceTradingApp(QMainWindow):
                 QMessageBox.information(self, "Manual Trade", f"Order {status}")
         except ValueError:
             QMessageBox.warning(self, "Manual Trade", "Invalid number format")
-
-    def auto_trade_signal(self, side):
-        """Place an automatic market order based on ML signal."""
-
-        qty_text = self.auto_trade_qty.text().strip()
-        if not qty_text:
-            return
-        try:
-            qty = float(qty_text)
-        except ValueError:
-            return
-        result = self.binance_api.place_order(
-            self.symbol_combo.currentText(), side, qty
-        )
-        if "error" in result:
-            print(f"Auto trade failed: {result['error']}")
-
     
     # ===== DATA PROCESSING AND UI UPDATES =====
     
