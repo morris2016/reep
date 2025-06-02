@@ -461,6 +461,33 @@ class MLSignalGenerator:
                 except ImportError:
                     print("XGBoost not available, using Random Forest")
                     return self.train_model(historical_data, "random_forest")
+            elif model_type == "council":
+                rf = RandomForestClassifier(
+                    n_estimators=150,
+                    max_depth=12,
+                    random_state=42,
+                    class_weight='balanced',
+                )
+                lr = LogisticRegression(max_iter=200)
+                rf.fit(X_train_scaled, y_train)
+                lr.fit(X_train_scaled, y_train)
+                self.models[model_type] = {'rf': rf, 'lr': lr}
+                # Evaluate council
+                def vote(pred_a, pred_b):
+                    return [pa if pa==pb else pa for pa,pb in zip(pred_a,pred_b)]
+                train_pred = vote(rf.predict(X_train_scaled), lr.predict(X_train_scaled))
+                test_pred = vote(rf.predict(X_test_scaled), lr.predict(X_test_scaled))
+                train_accuracy = accuracy_score(y_train, train_pred)
+                test_accuracy = accuracy_score(y_test, test_pred)
+                self.training_accuracy = test_accuracy
+                if hasattr(rf, 'feature_importances_'):
+                    importances = rf.feature_importances_
+                    self.feature_importance = list(zip(self.feature_names, importances))
+                    self.feature_importance.sort(key=lambda x: x[1], reverse=True)
+                self.is_trained = True
+                print(f"Training accuracy: {train_accuracy:.3f}")
+                print(f"Test accuracy: {test_accuracy:.3f}")
+                return True
             elif model_type == "advanced_ensemble":
                 self.models[model_type] = AdvancedEnsemble()
                 self.models[model_type].fit(X_train_scaled, y_train)
@@ -527,7 +554,15 @@ class MLSignalGenerator:
                 else:
                     prediction = 1
                 probabilities = [1 - prob_buy, 0, prob_buy]
-
+            elif model_type == "council":
+                rf = self.models[model_type]['rf']
+                lr = self.models[model_type]['lr']
+                pred_rf = rf.predict(features_scaled)[0]
+                pred_lr = lr.predict(features_scaled)[0]
+                prediction = pred_rf if pred_rf == pred_lr else pred_rf
+                prob_rf = rf.predict_proba(features_scaled)[0]
+                prob_lr = lr.predict_proba(features_scaled)[0]
+                probabilities = (prob_rf + prob_lr) / 2
             else:
                 prediction = self.models[model_type].predict(features_scaled)[0]
                 probabilities = self.models[model_type].predict_proba(features_scaled)[0]
@@ -692,6 +727,56 @@ class PriceChartWidget(QWidget):
         painter.drawPolyline(poly)
 
 
+class CandlestickChartWidget(QWidget):
+    """Widget to display OHLC data as candlesticks."""
+
+    def __init__(self, parent=None, max_candles=120):
+        super().__init__(parent)
+        self.candles = deque(maxlen=max_candles)
+        self.setMinimumHeight(150)
+
+    def add_candle(self, o, h, l, c):
+        """Add a candlestick and repaint."""
+
+        self.candles.append((o, h, l, c))
+        self.update()
+
+    def paintEvent(self, event):  # noqa: D401 - Qt override
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        rect = self.rect()
+        w = rect.width()
+        h = rect.height()
+
+        if not self.candles:
+            painter.setPen(QColor(200, 200, 200))
+            painter.drawText(rect, Qt.AlignCenter, "No data")
+            return
+
+        high = max(c[1] for c in self.candles)
+        low = min(c[2] for c in self.candles)
+        span = high - low or 1
+        step = w / len(self.candles)
+
+        for i, (o, hi, lo, c) in enumerate(self.candles):
+            x = i * step + step / 2
+            y_open = h - ((o - low) / span) * h
+            y_close = h - ((c - low) / span) * h
+            y_high = h - ((hi - low) / span) * h
+            y_low = h - ((lo - low) / span) * h
+
+            color = QColor(0, 255, 136) if c >= o else QColor(255, 68, 68)
+            painter.setPen(QPen(color, 2))
+            painter.drawLine(QPointF(x, y_high), QPointF(x, y_low))
+
+            rect_x = x - step * 0.3
+            rect_w = step * 0.6
+            rect_y = min(y_open, y_close)
+            rect_h = abs(y_close - y_open) or 1
+            painter.fillRect(rect_x, rect_y, rect_w, rect_h, color)
+
+
 class BinanceTradingApp(QMainWindow):
     """Main application with comprehensive ML trading capabilities"""
     
@@ -808,6 +893,7 @@ class BinanceTradingApp(QMainWindow):
             "Random Forest",
             "XGBoost",
             "Advanced Ensemble",
+            "Council",
             "Fallback Rules",
         ])
         self.model_combo.currentTextChanged.connect(self.on_model_changed)
@@ -867,10 +953,14 @@ class BinanceTradingApp(QMainWindow):
 
         price_layout.addWidget(self.price_display)
         price_layout.addLayout(stats_layout)
+        self.candle_chart = CandlestickChartWidget()
+        price_layout.addWidget(self.candle_chart)
         self.price_chart = PriceChartWidget()
+        self.candlestick_chart = CandlestickChartWidget()
         price_layout.addWidget(self.price_chart)
+        price_layout.addWidget(self.candlestick_chart)
         price_group.setLayout(price_layout)
-        
+
         layout.addWidget(price_group)
 
         # Manual trading controls
@@ -1456,6 +1546,7 @@ class BinanceTradingApp(QMainWindow):
             "Random Forest": "random_forest",
             "XGBoost": "xgboost",
             "Advanced Ensemble": "advanced_ensemble",
+            "Council": "council",
             "Fallback Rules": "fallback",
         }
         
@@ -1630,6 +1721,11 @@ class BinanceTradingApp(QMainWindow):
                 self.price_display.setText(price_text)
                 if hasattr(self, 'price_chart'):
                     self.price_chart.add_price(current_price)
+                if 'candle' in data and data['candle'] and hasattr(self, 'candlestick_chart'):
+                    c = data['candle']
+                    self.candlestick_chart.add_candle(
+                        float(c['Open']), float(c['High']), float(c['Low']), float(c['Close'])
+                    )
 
                 # Add to price history with trend analysis
                 self.add_enhanced_price_history(current_price, data.get('stats', {}))
@@ -1855,6 +1951,11 @@ class BinanceTradingApp(QMainWindow):
             self.ml_signals_table.setItem(0, 6, QTableWidgetItem(
                 "✅" if signal_data.get('is_ml_trained', False) else "❌"
             ))
+
+            # Auto trade if enabled
+            if (self.auto_trade_checkbox.isChecked() and
+                signal_text in ("BUY", "SELL") and confidence >= 75):
+                self.auto_trade_signal(signal_text)
             
             # Update analytics
             self.update_signal_analytics(signal_data)
@@ -1900,6 +2001,7 @@ class BinanceTradingApp(QMainWindow):
             "Random Forest": "random_forest",
             "XGBoost": "xgboost",
             "Advanced Ensemble": "advanced_ensemble",
+            "Council": "council",
             "Fallback Rules": "fallback",
         }
         
@@ -2051,6 +2153,11 @@ class BinanceTradingApp(QMainWindow):
                 self.price_display.setText(price_text)
                 if hasattr(self, 'price_chart'):
                     self.price_chart.add_price(current_price)
+                if 'ohlc' in data and hasattr(self, 'candle_chart') and data['ohlc']:
+                    ohlc = data['ohlc']
+                    self.candle_chart.add_candle(
+                        ohlc['open'], ohlc['high'], ohlc['low'], ohlc['close']
+                    )
                 self.add_enhanced_price_history(current_price, data.get('stats', {}))
             
             # Update comprehensive market statistics
@@ -2357,6 +2464,7 @@ class BinanceTradingApp(QMainWindow):
             "Random Forest": "random_forest",
             "XGBoost": "xgboost",
             "Advanced Ensemble": "advanced_ensemble",
+            "Council": "council",
             "Fallback Rules": "fallback",
         }
         
@@ -2701,7 +2809,11 @@ class BinanceTradingApp(QMainWindow):
             self.ml_signals_table.setItem(0, 6, QTableWidgetItem(
                 "✅" if signal_data.get('is_ml_trained', False) else "❌"
             ))
-            
+
+            if (self.auto_trade_checkbox.isChecked() and
+                signal_text in ["BUY", "SELL"]):
+                self.auto_trade(signal_text, signal_data['price'])
+
             self.update_signal_analytics(signal_data)
             
             for table in [self.signals_table, self.ml_signals_table]:
@@ -3582,6 +3694,12 @@ class EnhancedDataWorker(QThread):
                 if "error" not in price_data and "error" not in stats_data:
                     # Reset error counter on successful data fetch
                     consecutive_errors = 0
+
+                    # Latest candlestick
+                    candle_df = self.binance_api.get_historical_klines(self.symbol, "1m", 2)
+                    candle_dict = None
+                    if "error" not in candle_df and not candle_df.empty:
+                        candle_dict = candle_df.iloc[-1].to_dict()
                     
                     # Update historical buffer periodically
                     if self.update_counter % 12 == 0:  # Every 12 iterations (1 minute)
@@ -3616,10 +3734,21 @@ class EnhancedDataWorker(QThread):
                             self.ml_signal_generated.emit(signal_data)
                     
                     # Emit regular data update with comprehensive metadata
+                    ohlc = None
+                    if self.historical_buffer is not None and not self.historical_buffer.empty:
+                        last = self.historical_buffer.iloc[-1]
+                        ohlc = {
+                            'open': float(last['Open']),
+                            'high': float(last['High']),
+                            'low': float(last['Low']),
+                            'close': float(last['Close'])
+                        }
+
                     combined_data = {
                         'symbol': self.symbol,
                         'price': price_data,
                         'stats': stats_data,
+                        'candle': candle_dict,
                         'timestamp': datetime.datetime.now(),
                         'update_count': self.update_counter,
                         'ml_active': self.ml_generator.is_trained,
