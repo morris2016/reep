@@ -9,6 +9,8 @@ This project provides an advanced, GUI-based trading bot for Binance that levera
 - Professional dark-themed UI with live updates
 - Export of signal history and model persistence
 - Built-in testnet support for safe development and testing
+- Live price chart and optional auto-trading mode
+- Manual trade entry directly from the UI
 
 These features are summarized in the entry point docstring of [`reep.py`](./reep.py) around the `if __name__ == "__main__":` block.
 
@@ -29,6 +31,12 @@ python reep.py
 ```
 The `main()` function defined in [`reep.py`](./reep.py) performs dependency checks and launches the PyQt interface. Configure your Binance API credentials in the UI (use the Binance **testnet** initially) and select your preferred ML model to start trading.
 
+For manual trades, enter a quantity and optional limit price in the **Manual Trade** section, then click **Submit**. Enable **Auto Trade** to allow the bot to automatically place orders whenever a new ML signal is generated.
+
 ## Notes
 - Always test with the Binance testnet before trading live funds.
 - This project is for educational purposes and does not constitute financial advice.
+
+## License
+This project is licensed under the [MIT License](LICENSE).
+
