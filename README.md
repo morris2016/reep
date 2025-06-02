@@ -13,7 +13,7 @@ This project provides an advanced, GUI-based trading bot for Binance that levera
 - Export of signal history and model persistence
 - Manual trading interface for quick order execution
 - Built-in "Copy Source" button for easy code sharing
-- Improved API error handling and credential testing
+- Detailed authentication error messages for easier API troubleshooting
 - Optional advanced risk management and regime detection modules
 - Experimental online learning optimizer for real-time adaptation
 - Built-in testnet support for safe development and testing

@@ -108,8 +108,11 @@ class EnhancedBinanceAPI:
         except requests.exceptions.HTTPError as e:
             try:
                 error_data = e.response.json()
-                return {"error": f"API Error: {error_data.get('msg', 'Unknown error')}"}
-            except:
+                msg = error_data.get('msg', 'Unknown error')
+                if 'API-key' in msg or 'permissions' in msg:
+                    return {"error": "Authentication failed: Invalid API key or permissions"}
+                return {"error": f"API Error: {msg}"}
+            except Exception:
                 return {"error": f"HTTP Error {e.response.status_code}"}
         except Exception as e:
             return {"error": f"Unexpected error: {str(e)}"}
@@ -3275,17 +3278,22 @@ class BinanceTradingApp(QMainWindow):
             
             # Test 2: API credentials validation
             account_info = self.binance_api.get_account_info()
-            
+
             if "error" in account_info:
                 error_msg = account_info.get('error', 'Unknown error')
                 self.update_connection_status(f"❌ API Error: {error_msg}")
-                QMessageBox.critical(self, "Connection Test", 
-                    f"❌ API Authentication Failed\n\n"
-                    f"Error: {error_msg}\n\n"
-                    f"Please verify:\n"
-                    f"• API key and secret are correct\n"
-                    f"• API permissions are properly set\n"
-                    f"• Using correct environment (testnet/live)")
+
+                if "Authentication failed" in error_msg or "Invalid API key" in error_msg:
+                    hint = ("Your API key or permissions appear invalid.\n\n"
+                            "Check that the key/secret are correct and that the IP is whitelisted ")
+                else:
+                    hint = "Please verify your credentials and network settings."
+
+                QMessageBox.critical(
+                    self,
+                    "Connection Test",
+                    f"❌ API Authentication Failed\n\nError: {error_msg}\n\n{hint}"
+                )
             else:
                 self.update_connection_status("✅ API connection verified")
                 
