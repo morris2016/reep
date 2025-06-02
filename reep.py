@@ -44,6 +44,19 @@ class EnhancedBinanceAPI:
             "key_type": "HMAC-SHA-256",
             "description": "Enhanced ML Trading Bot"
         }
+
+    def place_order(self, symbol, side, quantity, order_type="MARKET", price=None):
+        """Place a simple order on Binance."""
+        params = {
+            "symbol": symbol,
+            "side": side.upper(),
+            "type": order_type.upper(),
+            "quantity": quantity,
+        }
+        if params["type"] == "LIMIT" and price is not None:
+            params["timeInForce"] = "GTC"
+            params["price"] = price
+        return self._send_request("POST", "/api/v3/order", params=params, signed=True)
     
     def get_server_time(self):
         """Get Binance server time with error handling"""
@@ -648,6 +661,55 @@ class PriceChartWidget(QWidget):
         painter.drawPolyline(poly)
 
 
+class CandlestickChartWidget(QWidget):
+    """Widget to display OHLC candlestick data."""
+
+    def __init__(self, parent=None, max_points=60):
+        super().__init__(parent)
+        self.candles = deque(maxlen=max_points)
+        self.setMinimumHeight(200)
+
+    def add_candle(self, o, h, l, c):
+        """Add a new candlestick."""
+        self.candles.append((o, h, l, c))
+        self.update()
+
+    def paintEvent(self, event):  # noqa: D401 - Qt override
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        rect = self.rect()
+        w = rect.width()
+        h = rect.height()
+
+        if not self.candles:
+            painter.setPen(QColor(200, 200, 200))
+            painter.drawText(rect, Qt.AlignCenter, "No data")
+            return
+
+        highs = [c[1] for c in self.candles]
+        lows = [c[2] for c in self.candles]
+        minimum = min(lows)
+        maximum = max(highs)
+        span = maximum - minimum or 1
+
+        candle_w = w / max(len(self.candles), 1)
+
+        for i, (o, hi, lo, c) in enumerate(self.candles):
+            x = i * candle_w + candle_w / 2
+            open_y = h - ((o - minimum) / span) * h
+            close_y = h - ((c - minimum) / span) * h
+            high_y = h - ((hi - minimum) / span) * h
+            low_y = h - ((lo - minimum) / span) * h
+
+            color = QColor(0, 255, 136) if c >= o else QColor(255, 68, 68)
+            painter.setPen(QPen(color, 1))
+            painter.drawLine(QPointF(x, high_y), QPointF(x, low_y))
+            painter.setPen(QPen(color, 3))
+            painter.drawLine(QPointF(x - candle_w / 3, open_y), QPointF(x, open_y))
+            painter.drawLine(QPointF(x, close_y), QPointF(x + candle_w / 3, close_y))
+
+
 class BinanceTradingApp(QMainWindow):
     """Main application with comprehensive ML trading capabilities"""
     
@@ -710,6 +772,11 @@ class BinanceTradingApp(QMainWindow):
         self.analytics_tab = QWidget()
         self.setup_analytics_tab()
         self.tabs.addTab(self.analytics_tab, "📊 Analytics")
+
+        # About Tab with source code access
+        self.about_tab = QWidget()
+        self.setup_about_tab()
+        self.tabs.addTab(self.about_tab, "ℹ️ About")
         
         self.main_layout.addWidget(self.tabs)
         self.central_widget.setLayout(self.main_layout)
@@ -818,12 +885,56 @@ class BinanceTradingApp(QMainWindow):
 
         price_layout.addWidget(self.price_display)
         price_layout.addLayout(stats_layout)
+        self.candle_chart = CandlestickChartWidget()
+        price_layout.addWidget(self.candle_chart)
         self.price_chart = PriceChartWidget()
         price_layout.addWidget(self.price_chart)
         price_group.setLayout(price_layout)
-        
+
         layout.addWidget(price_group)
-        
+
+        # Manual trading controls
+        manual_group = QGroupBox("🖐️ Manual Trading")
+        manual_layout = QHBoxLayout()
+
+        self.manual_qty = QLineEdit()
+        self.manual_qty.setPlaceholderText("Quantity")
+        self.manual_price = QLineEdit()
+        self.manual_price.setPlaceholderText("Price (for limit)")
+        self.manual_order_type = QComboBox()
+        self.manual_order_type.addItems(["MARKET", "LIMIT"])
+
+        self.manual_buy_button = QPushButton("Buy")
+        self.manual_sell_button = QPushButton("Sell")
+        self.manual_buy_button.clicked.connect(lambda: self.execute_manual_order("BUY"))
+        self.manual_sell_button.clicked.connect(lambda: self.execute_manual_order("SELL"))
+
+        manual_layout.addWidget(QLabel("Qty:"))
+        manual_layout.addWidget(self.manual_qty)
+        manual_layout.addWidget(QLabel("Price:"))
+        manual_layout.addWidget(self.manual_price)
+        manual_layout.addWidget(QLabel("Type:"))
+        manual_layout.addWidget(self.manual_order_type)
+        manual_layout.addWidget(self.manual_buy_button)
+        manual_layout.addWidget(self.manual_sell_button)
+        manual_group.setLayout(manual_layout)
+
+        layout.addWidget(manual_group)
+
+        # Auto trading controls
+        auto_group = QGroupBox("🤖 Auto Trading")
+        auto_layout = QHBoxLayout()
+
+        self.auto_trade_checkbox = QCheckBox("Enable Auto Trading")
+        self.auto_trade_qty = QLineEdit()
+        self.auto_trade_qty.setPlaceholderText("Qty per trade")
+
+        auto_layout.addWidget(self.auto_trade_checkbox)
+        auto_layout.addWidget(self.auto_trade_qty)
+        auto_group.setLayout(auto_layout)
+
+        layout.addWidget(auto_group)
+
         # Enhanced data tables
         self.setup_enhanced_tables(layout)
         
@@ -1069,6 +1180,27 @@ class BinanceTradingApp(QMainWindow):
         layout.addStretch()
         
         self.analytics_tab.setLayout(layout)
+
+    def setup_about_tab(self):
+        """Setup about page with a button to copy source code."""
+        layout = QVBoxLayout()
+        layout.addWidget(QLabel(
+            "<b>Advanced ML Binance Trading Bot</b><br>Source available for review."))
+        self.copy_code_button = QPushButton("Copy Source Code")
+        self.copy_code_button.clicked.connect(self.copy_source_code)
+        layout.addWidget(self.copy_code_button)
+        layout.addStretch()
+        self.about_tab.setLayout(layout)
+
+    def copy_source_code(self):
+        """Copy full source file to clipboard."""
+        try:
+            with open(__file__, "r", encoding="utf-8") as f:
+                code = f.read()
+            QApplication.clipboard().setText(code)
+            QMessageBox.information(self, "Copy Code", "Source code copied to clipboard")
+        except Exception as e:
+            QMessageBox.warning(self, "Copy Code", f"Failed to copy code: {e}")
     
     def setup_enhanced_tables(self, parent_layout):
         """Setup enhanced data display tables"""
@@ -1490,8 +1622,49 @@ class BinanceTradingApp(QMainWindow):
             self.update_ml_status("🔄 Idle")
             
         except Exception as e:
-            QMessageBox.warning(self, "Stop Error", 
+            QMessageBox.warning(self, "Stop Error",
                 f"Error during shutdown:\n{str(e)}")
+
+    def execute_manual_order(self, side):
+        """Execute a manual trade using current API settings."""
+        qty_text = self.manual_qty.text().strip()
+        if not qty_text:
+            QMessageBox.warning(self, "Manual Trade", "Quantity is required")
+            return
+        try:
+            qty = float(qty_text)
+            order_type = self.manual_order_type.currentText()
+            price = self.manual_price.text().strip()
+            price_val = float(price) if price and order_type == "LIMIT" else None
+            result = self.binance_api.place_order(
+                self.symbol_combo.currentText(), side, qty, order_type, price_val
+            )
+            if "error" in result:
+                QMessageBox.warning(self, "Manual Trade", f"Order failed: {result['error']}")
+            else:
+                status = result.get('status', 'Placed')
+                QMessageBox.information(self, "Manual Trade", f"Order {status}")
+        except ValueError:
+            QMessageBox.warning(self, "Manual Trade", "Invalid number format")
+
+    def auto_trade(self, side, price):
+        """Automatically place an order based on an ML signal."""
+        qty_text = self.auto_trade_qty.text().strip()
+        if not qty_text:
+            return
+        try:
+            qty = float(qty_text)
+            result = self.binance_api.place_order(
+                self.current_symbol, side, qty
+            )
+            if "error" in result:
+                self.update_connection_status(f"❌ Auto trade failed: {result['error']}")
+            else:
+                self.update_connection_status(
+                    f"✅ Auto trade executed: {side} {qty} @ {price}"
+                )
+        except ValueError:
+            self.update_connection_status("❌ Invalid auto trade quantity")
     
     # ===== DATA PROCESSING AND UI UPDATES =====
     
@@ -1931,6 +2104,11 @@ class BinanceTradingApp(QMainWindow):
                 self.price_display.setText(price_text)
                 if hasattr(self, 'price_chart'):
                     self.price_chart.add_price(current_price)
+                if 'ohlc' in data and hasattr(self, 'candle_chart') and data['ohlc']:
+                    ohlc = data['ohlc']
+                    self.candle_chart.add_candle(
+                        ohlc['open'], ohlc['high'], ohlc['low'], ohlc['close']
+                    )
                 self.add_enhanced_price_history(current_price, data.get('stats', {}))
             
             # Update comprehensive market statistics
@@ -2581,7 +2759,11 @@ class BinanceTradingApp(QMainWindow):
             self.ml_signals_table.setItem(0, 6, QTableWidgetItem(
                 "✅" if signal_data.get('is_ml_trained', False) else "❌"
             ))
-            
+
+            if (self.auto_trade_checkbox.isChecked() and
+                signal_text in ["BUY", "SELL"]):
+                self.auto_trade(signal_text, signal_data['price'])
+
             self.update_signal_analytics(signal_data)
             
             for table in [self.signals_table, self.ml_signals_table]:
@@ -3496,10 +3678,21 @@ class EnhancedDataWorker(QThread):
                             self.ml_signal_generated.emit(signal_data)
                     
                     # Emit regular data update with comprehensive metadata
+                    ohlc = None
+                    if self.historical_buffer is not None and not self.historical_buffer.empty:
+                        last = self.historical_buffer.iloc[-1]
+                        ohlc = {
+                            'open': float(last['Open']),
+                            'high': float(last['High']),
+                            'low': float(last['Low']),
+                            'close': float(last['Close'])
+                        }
+
                     combined_data = {
                         'symbol': self.symbol,
                         'price': price_data,
                         'stats': stats_data,
+                        'ohlc': ohlc,
                         'timestamp': datetime.datetime.now(),
                         'update_count': self.update_counter,
                         'ml_active': self.ml_generator.is_trained,
