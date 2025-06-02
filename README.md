@@ -8,7 +8,11 @@ This project provides an advanced, GUI-based trading bot for Binance that levera
 - Over 25 technical indicators from the `ta` library
 - Professional dark-themed UI with live updates
 - Real-time price chart widget visualizing recent prices
+- Candlestick chart for OHLC visualization
 - Export of signal history and model persistence
+- Manual trading interface for quick order execution
+- Optional auto-trading mode to execute ML signals
+- Built-in "Copy Source" button for easy code sharing
 - Optional advanced risk management and regime detection modules
 - Experimental online learning optimizer for real-time adaptation
 - Built-in testnet support for safe development and testing
