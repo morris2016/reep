@@ -32,3 +32,7 @@ The `main()` function defined in [`reep.py`](./reep.py) performs dependency chec
 ## Notes
 - Always test with the Binance testnet before trading live funds.
 - This project is for educational purposes and does not constitute financial advice.
+
+## License
+This project is licensed under the [MIT License](LICENSE).
+
