@@ -278,6 +278,7 @@ class BinanceTradingApp(QMainWindow):
         auto_layout.addWidget(self.auto_trade_qty)
         auto_layout.addWidget(QLabel("Min Confidence:"))
         auto_layout.addWidget(self.confidence_spin)
+
         auto_group.setLayout(auto_layout)
 
         layout.addWidget(auto_group)
@@ -1246,6 +1247,7 @@ class BinanceTradingApp(QMainWindow):
                 and signal_text in ("BUY", "SELL")
                 and confidence >= self.confidence_spin.value()
             ):
+
                 qty_text = self.auto_trade_qty.text().strip()
                 try:
                     qty = float(qty_text)
@@ -1257,6 +1259,7 @@ class BinanceTradingApp(QMainWindow):
                             self.update_connection_status(
                                 f"Auto trade error: {result['error']}"
                             )
+
                         else:
                             self.update_connection_status("✅ Auto trade executed")
                 except ValueError:
