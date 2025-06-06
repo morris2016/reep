@@ -9,6 +9,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer, QPointF
 from PyQt5.QtGui import QFont, QColor, QPainter, QPen, QPolygonF
 from collections import deque
+import sys
 from trading_logic import EnhancedBinanceAPI, EnhancedDataWorker
 
 class PriceChartWidget(QWidget):
