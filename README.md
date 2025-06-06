@@ -12,6 +12,7 @@ This project provides an advanced, GUI-based trading bot for Binance that levera
 - Candlestick chart for OHLC visualization
 - Export of signal history and model persistence
 - Manual trading interface for quick order execution
+- Optional auto trading mode to automatically execute ML signals
 - Built-in "Copy Source" button for easy code sharing
 - Detailed authentication error messages for easier API troubleshooting
 - Optional advanced risk management and regime detection modules
