@@ -4,11 +4,12 @@ from PyQt5.QtWidgets import (
     QLabel, QComboBox, QTableWidget, QTableWidgetItem,
     QHeaderView, QLineEdit, QGroupBox, QFormLayout,
     QTextEdit, QTabWidget, QMessageBox, QFileDialog,
-    QProgressBar, QCheckBox
+    QProgressBar, QCheckBox, QSpinBox
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer, QPointF
 from PyQt5.QtGui import QFont, QColor, QPainter, QPen, QPolygonF
 from collections import deque
+import sys
 from trading_logic import EnhancedBinanceAPI, EnhancedDataWorker
 
 class PriceChartWidget(QWidget):
@@ -260,6 +261,26 @@ class BinanceTradingApp(QMainWindow):
         manual_group.setLayout(manual_layout)
 
         layout.addWidget(manual_group)
+
+        # Auto trading controls
+        auto_group = QGroupBox("🤖 Auto Trading")
+        auto_layout = QHBoxLayout()
+        self.auto_trade_checkbox = QCheckBox("Enable Auto Trade")
+        self.auto_trade_qty = QLineEdit()
+        self.auto_trade_qty.setPlaceholderText("Qty per trade")
+
+        self.confidence_spin = QSpinBox()
+        self.confidence_spin.setRange(50, 100)
+        self.confidence_spin.setValue(80)
+        self.confidence_spin.setSuffix("%")
+
+        auto_layout.addWidget(self.auto_trade_checkbox)
+        auto_layout.addWidget(self.auto_trade_qty)
+        auto_layout.addWidget(QLabel("Min Confidence:"))
+        auto_layout.addWidget(self.confidence_spin)
+        auto_group.setLayout(auto_layout)
+
+        layout.addWidget(auto_group)
 
         # Enhanced data tables
         self.setup_enhanced_tables(layout)
@@ -1218,6 +1239,28 @@ class BinanceTradingApp(QMainWindow):
             
             # Update analytics
             self.update_signal_analytics(signal_data)
+
+            # Auto trading if enabled and confidence threshold met
+            if (
+                self.auto_trade_checkbox.isChecked()
+                and signal_text in ("BUY", "SELL")
+                and confidence >= self.confidence_spin.value()
+            ):
+                qty_text = self.auto_trade_qty.text().strip()
+                try:
+                    qty = float(qty_text)
+                    if qty > 0:
+                        result = self.binance_api.place_order(
+                            self.current_symbol, signal_text, qty, "MARKET"
+                        )
+                        if "error" in result:
+                            self.update_connection_status(
+                                f"Auto trade error: {result['error']}"
+                            )
+                        else:
+                            self.update_connection_status("✅ Auto trade executed")
+                except ValueError:
+                    self.update_connection_status("Invalid auto trade qty")
             
             # Maintain table sizes
             for table in [self.signals_table, self.ml_signals_table]:
