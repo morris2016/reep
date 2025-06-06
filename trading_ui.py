@@ -4,7 +4,7 @@ from PyQt5.QtWidgets import (
     QLabel, QComboBox, QTableWidget, QTableWidgetItem,
     QHeaderView, QLineEdit, QGroupBox, QFormLayout,
     QTextEdit, QTabWidget, QMessageBox, QFileDialog,
-    QProgressBar, QCheckBox
+    QProgressBar, QCheckBox, QSpinBox
 )
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer, QPointF
 from PyQt5.QtGui import QFont, QColor, QPainter, QPen, QPolygonF
@@ -268,8 +268,17 @@ class BinanceTradingApp(QMainWindow):
         self.auto_trade_checkbox = QCheckBox("Enable Auto Trade")
         self.auto_trade_qty = QLineEdit()
         self.auto_trade_qty.setPlaceholderText("Qty per trade")
+
+        self.confidence_spin = QSpinBox()
+        self.confidence_spin.setRange(50, 100)
+        self.confidence_spin.setValue(80)
+        self.confidence_spin.setSuffix("%")
+
         auto_layout.addWidget(self.auto_trade_checkbox)
         auto_layout.addWidget(self.auto_trade_qty)
+        auto_layout.addWidget(QLabel("Min Confidence:"))
+        auto_layout.addWidget(self.confidence_spin)
+
         auto_group.setLayout(auto_layout)
 
         layout.addWidget(auto_group)
@@ -1232,8 +1241,13 @@ class BinanceTradingApp(QMainWindow):
             # Update analytics
             self.update_signal_analytics(signal_data)
 
-            # Auto trading if enabled
-            if (self.auto_trade_checkbox.isChecked() and signal_text in ("BUY", "SELL")):
+            # Auto trading if enabled and confidence threshold met
+            if (
+                self.auto_trade_checkbox.isChecked()
+                and signal_text in ("BUY", "SELL")
+                and confidence >= self.confidence_spin.value()
+            ):
+
                 qty_text = self.auto_trade_qty.text().strip()
                 try:
                     qty = float(qty_text)
@@ -1242,7 +1256,10 @@ class BinanceTradingApp(QMainWindow):
                             self.current_symbol, signal_text, qty, "MARKET"
                         )
                         if "error" in result:
-                            self.update_connection_status(f"Auto trade error: {result['error']}")
+                            self.update_connection_status(
+                                f"Auto trade error: {result['error']}"
+                            )
+
                         else:
                             self.update_connection_status("✅ Auto trade executed")
                 except ValueError:
