@@ -12,6 +12,7 @@ from collections import deque
 import sys
 import datetime
 from trading_logic import EnhancedBinanceAPI, EnhancedDataWorker
+from database import init_db, insert_trade, fetch_trades
 
 class PriceChartWidget(QWidget):
     """Lightweight widget to display live price history as a line chart."""
@@ -74,10 +75,16 @@ class BinanceTradingApp(QMainWindow):
         
         # Performance tracking
         self.signal_performance = []
-        
+
+        # Initialize database
+        init_db()
+
         # Setup UI
         self.setup_ui()
         self.apply_styling()
+
+        # Load persisted trades after tables are created
+        self.load_trade_history_from_db()
         
         # Initialize status
         self.update_connection_status("🔄 Ready - Configure API for live trading")
@@ -596,6 +603,18 @@ class BinanceTradingApp(QMainWindow):
         self.trade_history_table.setMaximumHeight(150)
 
         trade_layout.addWidget(self.trade_history_table)
+
+        # Buttons to refresh/export trade history
+        buttons_layout = QHBoxLayout()
+        self.refresh_trades_button = QPushButton("Refresh")
+        self.export_trades_button = QPushButton("Export CSV")
+        self.refresh_trades_button.clicked.connect(self.load_trade_history_from_db)
+        self.export_trades_button.clicked.connect(self.export_trades_csv)
+        buttons_layout.addWidget(self.refresh_trades_button)
+        buttons_layout.addWidget(self.export_trades_button)
+        buttons_layout.addStretch()
+        trade_layout.addLayout(buttons_layout)
+
         trade_group.setLayout(trade_layout)
         parent_layout.addWidget(trade_group)
     
@@ -1031,6 +1050,47 @@ class BinanceTradingApp(QMainWindow):
         self.trade_history_table.setItem(0, 4, QTableWidgetItem(price_text))
         if self.trade_history_table.rowCount() > 20:
             self.trade_history_table.removeRow(20)
+
+        # Persist to database
+        try:
+            insert_trade(current_time, symbol, side, qty, price or 0)
+        except Exception as exc:
+            print(f"Failed to persist trade: {exc}")
+
+    def load_trade_history_from_db(self):
+        """Load persisted trades from the SQLite database."""
+        try:
+            rows = fetch_trades()
+            for row in rows:
+                time_str, symbol, side, qty, price = row
+                row_idx = self.trade_history_table.rowCount()
+                self.trade_history_table.insertRow(row_idx)
+                self.trade_history_table.setItem(row_idx, 0, QTableWidgetItem(time_str))
+                self.trade_history_table.setItem(row_idx, 1, QTableWidgetItem(symbol))
+                self.trade_history_table.setItem(row_idx, 2, QTableWidgetItem(side))
+                self.trade_history_table.setItem(row_idx, 3, QTableWidgetItem(f"{qty:g}"))
+                price_text = f"${price:,.4f}" if price < 1000 else f"${price:,.2f}"
+                self.trade_history_table.setItem(row_idx, 4, QTableWidgetItem(price_text))
+        except Exception as exc:
+            print(f"Failed to load trade history: {exc}")
+
+    def export_trades_csv(self):
+        """Export stored trades to a CSV file chosen by the user."""
+        path, _ = QFileDialog.getSaveFileName(self, "Export Trades", "trades.csv", "CSV Files (*.csv)")
+        if not path:
+            return
+        try:
+            rows = fetch_trades(limit=1000)
+            import csv
+            with open(path, "w", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                writer.writerow(["Time", "Symbol", "Side", "Qty", "Price"])
+                for r in rows:
+                    writer.writerow(r)
+            QMessageBox.information(self, "Export", f"Trades exported to {path}")
+        except Exception as exc:
+            QMessageBox.warning(self, "Export", f"Failed to export trades: {exc}")
+
 
     def get_current_price(self):
         """Try to parse the latest price from the display."""
