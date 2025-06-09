@@ -13,10 +13,38 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, classification_report
-from sklearn.linear_model import LogisticRegression
 import joblib
 import ta  # Technical Analysis library
 from PyQt5.QtCore import QThread, pyqtSignal
+
+class CouncilEnsemble:
+    """Simple ensemble using Random Forest and Logistic Regression."""
+
+    def __init__(self):
+        self.rf = RandomForestClassifier(
+            n_estimators=150, random_state=42, class_weight="balanced"
+        )
+        self.lr = LogisticRegression(max_iter=200, multi_class="auto")
+
+    def fit(self, X, y):
+        self.rf.fit(X, y)
+        self.lr.fit(X, y)
+
+    def predict(self, X):
+        rf_pred = self.rf.predict(X)
+        lr_pred = self.lr.predict(X)
+        preds = []
+        for r, l in zip(rf_pred, lr_pred):
+            votes = {0: 0, 1: 0, 2: 0}
+            votes[r] += 1
+            votes[l] += 1
+            preds.append(max(votes, key=votes.get))
+        return np.array(preds)
+
+    def predict_proba(self, X):
+        rf_prob = self.rf.predict_proba(X)
+        lr_prob = self.lr.predict_proba(X)
+        return (rf_prob + lr_prob) / 2
 
 
 class EnhancedBinanceAPI:
@@ -422,6 +450,8 @@ class MLSignalGenerator:
                 except ImportError:
                     print("XGBoost not available, using Random Forest")
                     return self.train_model(historical_data, "random_forest")
+            elif model_type == "council":
+                self.models[model_type] = CouncilEnsemble()
             elif model_type == "advanced_ensemble":
                 self.models[model_type] = AdvancedEnsemble()
                 self.models[model_type].fit(X_train_scaled, y_train)

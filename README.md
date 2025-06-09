@@ -4,8 +4,8 @@ This project provides an advanced, GUI-based trading bot for Binance that levera
 
 ## Features
 - Real-time Binance market data integration
-- Multiple ML models (Random Forest, XGBoost, Advanced Ensemble, rule-based fallback)
-- Council ensemble model combining Random Forest and Logistic Regression
+- Multiple ML models (Random Forest, XGBoost, Advanced Ensemble, rule-based fallback, and more)
+- Council ensemble model combining Random Forest and Logistic Regression ("Council" model)
 - Over 25 technical indicators from the `ta` library
 - Professional dark-themed UI with live updates
 - Real-time price chart widget visualizing recent prices
@@ -16,7 +16,6 @@ This project provides an advanced, GUI-based trading bot for Binance that levera
  - Configurable confidence threshold for safer auto trading
 - Trade history table showing executed manual and auto orders
 - Trade history persisted to a local SQLite database with CSV export
-
 - Built-in "Copy Source" button for easy code sharing
 - Detailed authentication error messages for easier API troubleshooting
 - Optional advanced risk management and regime detection modules
