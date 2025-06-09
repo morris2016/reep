@@ -1354,6 +1354,7 @@ class BinanceTradingApp(QMainWindow):
                 and signal_text in ("BUY", "SELL")
                 and confidence >= self.confidence_spin.value()
             ):
+
                 qty_text = self.auto_trade_qty.text().strip()
                 try:
                     qty = float(qty_text)
@@ -1373,6 +1374,7 @@ class BinanceTradingApp(QMainWindow):
                                 qty,
                                 self.get_current_price(),
                             )
+
                 except ValueError:
                     self.update_connection_status("Invalid auto trade qty")
             
