@@ -10,7 +10,9 @@ from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer, QPointF
 from PyQt5.QtGui import QFont, QColor, QPainter, QPen, QPolygonF
 from collections import deque
 import sys
+import datetime
 from trading_logic import EnhancedBinanceAPI, EnhancedDataWorker
+from database import init_db, insert_trade, fetch_trades
 
 class PriceChartWidget(QWidget):
     """Lightweight widget to display live price history as a line chart."""
@@ -73,10 +75,16 @@ class BinanceTradingApp(QMainWindow):
         
         # Performance tracking
         self.signal_performance = []
-        
+
+        # Initialize database
+        init_db()
+
         # Setup UI
         self.setup_ui()
         self.apply_styling()
+
+        # Load persisted trades after tables are created
+        self.load_trade_history_from_db()
         
         # Initialize status
         self.update_connection_status("🔄 Ready - Configure API for live trading")
@@ -278,7 +286,6 @@ class BinanceTradingApp(QMainWindow):
         auto_layout.addWidget(self.auto_trade_qty)
         auto_layout.addWidget(QLabel("Min Confidence:"))
         auto_layout.addWidget(self.confidence_spin)
-
         auto_group.setLayout(auto_layout)
 
         layout.addWidget(auto_group)
@@ -579,10 +586,37 @@ class BinanceTradingApp(QMainWindow):
         self.price_history_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.price_history_table.setAlternatingRowColors(True)
         self.price_history_table.setMaximumHeight(150)
-        
+
         history_layout.addWidget(self.price_history_table)
         history_group.setLayout(history_layout)
         parent_layout.addWidget(history_group)
+
+        # Executed Trade History
+        trade_group = QGroupBox("📜 Trade History")
+        trade_layout = QVBoxLayout()
+        self.trade_history_table = QTableWidget(0, 5)
+        self.trade_history_table.setHorizontalHeaderLabels([
+            "Time", "Symbol", "Side", "Qty", "Price"
+        ])
+        self.trade_history_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.trade_history_table.setAlternatingRowColors(True)
+        self.trade_history_table.setMaximumHeight(150)
+
+        trade_layout.addWidget(self.trade_history_table)
+
+        # Buttons to refresh/export trade history
+        buttons_layout = QHBoxLayout()
+        self.refresh_trades_button = QPushButton("Refresh")
+        self.export_trades_button = QPushButton("Export CSV")
+        self.refresh_trades_button.clicked.connect(self.load_trade_history_from_db)
+        self.export_trades_button.clicked.connect(self.export_trades_csv)
+        buttons_layout.addWidget(self.refresh_trades_button)
+        buttons_layout.addWidget(self.export_trades_button)
+        buttons_layout.addStretch()
+        trade_layout.addLayout(buttons_layout)
+
+        trade_group.setLayout(trade_layout)
+        parent_layout.addWidget(trade_group)
     
     def apply_styling(self):
         """Apply comprehensive modern styling"""
@@ -992,8 +1026,81 @@ class BinanceTradingApp(QMainWindow):
             else:
                 status = result.get('status', 'Placed')
                 QMessageBox.information(self, "Manual Trade", f"Order {status}")
+                self.log_trade(
+                    self.symbol_combo.currentText(),
+                    side,
+                    qty,
+                    float(price_val) if price_val else self.get_current_price()
+                )
         except ValueError:
             QMessageBox.warning(self, "Manual Trade", "Invalid number format")
+
+    def log_trade(self, symbol, side, qty, price):
+        """Record an executed trade in the history table."""
+        current_time = datetime.datetime.now().strftime("%H:%M:%S")
+        self.trade_history_table.insertRow(0)
+        self.trade_history_table.setItem(0, 0, QTableWidgetItem(current_time))
+        self.trade_history_table.setItem(0, 1, QTableWidgetItem(symbol))
+        self.trade_history_table.setItem(0, 2, QTableWidgetItem(side))
+        self.trade_history_table.setItem(0, 3, QTableWidgetItem(f"{qty:g}"))
+        if price:
+            price_text = f"${price:,.4f}" if price < 1000 else f"${price:,.2f}"
+        else:
+            price_text = "--"
+        self.trade_history_table.setItem(0, 4, QTableWidgetItem(price_text))
+        if self.trade_history_table.rowCount() > 20:
+            self.trade_history_table.removeRow(20)
+
+        # Persist to database
+        try:
+            insert_trade(current_time, symbol, side, qty, price or 0)
+        except Exception as exc:
+            print(f"Failed to persist trade: {exc}")
+
+    def load_trade_history_from_db(self):
+        """Load persisted trades from the SQLite database."""
+        try:
+            rows = fetch_trades()
+            for row in rows:
+                time_str, symbol, side, qty, price = row
+                row_idx = self.trade_history_table.rowCount()
+                self.trade_history_table.insertRow(row_idx)
+                self.trade_history_table.setItem(row_idx, 0, QTableWidgetItem(time_str))
+                self.trade_history_table.setItem(row_idx, 1, QTableWidgetItem(symbol))
+                self.trade_history_table.setItem(row_idx, 2, QTableWidgetItem(side))
+                self.trade_history_table.setItem(row_idx, 3, QTableWidgetItem(f"{qty:g}"))
+                price_text = f"${price:,.4f}" if price < 1000 else f"${price:,.2f}"
+                self.trade_history_table.setItem(row_idx, 4, QTableWidgetItem(price_text))
+        except Exception as exc:
+            print(f"Failed to load trade history: {exc}")
+
+    def export_trades_csv(self):
+        """Export stored trades to a CSV file chosen by the user."""
+        path, _ = QFileDialog.getSaveFileName(self, "Export Trades", "trades.csv", "CSV Files (*.csv)")
+        if not path:
+            return
+        try:
+            rows = fetch_trades(limit=1000)
+            import csv
+            with open(path, "w", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                writer.writerow(["Time", "Symbol", "Side", "Qty", "Price"])
+                for r in rows:
+                    writer.writerow(r)
+            QMessageBox.information(self, "Export", f"Trades exported to {path}")
+        except Exception as exc:
+            QMessageBox.warning(self, "Export", f"Failed to export trades: {exc}")
+
+
+    def get_current_price(self):
+        """Try to parse the latest price from the display."""
+        text = self.price_display.text()
+        if "$" in text:
+            try:
+                return float(text.split("$")[-1].replace(",", ""))
+            except ValueError:
+                return 0.0
+        return 0.0
     
     # ===== DATA PROCESSING AND UI UPDATES =====
     
@@ -1259,9 +1366,15 @@ class BinanceTradingApp(QMainWindow):
                             self.update_connection_status(
                                 f"Auto trade error: {result['error']}"
                             )
-
                         else:
                             self.update_connection_status("✅ Auto trade executed")
+                            self.log_trade(
+                                self.current_symbol,
+                                signal_text,
+                                qty,
+                                self.get_current_price(),
+                            )
+
                 except ValueError:
                     self.update_connection_status("Invalid auto trade qty")
             
@@ -1730,8 +1843,66 @@ class BinanceTradingApp(QMainWindow):
             
         except Exception as e:
             print(f"Error updating signal analytics: {e}")
-    
-    
+
+    def update_performance_table(self):
+        """Update performance table with time-based analysis"""
+        try:
+            if not self.signal_performance:
+                return
+
+            self.performance_table.setRowCount(0)
+
+            now = datetime.datetime.now()
+            time_periods = [
+                ("Last 5 minutes", 5),
+                ("Last 15 minutes", 15),
+                ("Last 30 minutes", 30),
+                ("Last 1 hour", 60),
+                ("Last 2 hours", 120)
+            ]
+            for period_name, minutes in time_periods:
+                cutoff_time = now - datetime.timedelta(minutes=minutes)
+                period_signals = [
+                    s for s in self.signal_performance
+                    if s['timestamp'] >= cutoff_time
+                ]
+
+                if period_signals:
+                    signal_count = len(period_signals)
+                    avg_confidence = sum(s['confidence'] for s in period_signals) / signal_count
+
+                    best_signal = max(period_signals, key=lambda x: x['confidence'])
+                    best_signal_text = f"{best_signal['signal']} ({best_signal['confidence']}%)"
+
+                    models = [s.get('model_type', 'Unknown') for s in period_signals]
+                    model_counts = {}
+                    for model in models:
+                        model_counts[model] = model_counts.get(model, 0) + 1
+                    dominant_model = max(model_counts.items(), key=lambda x: x[1])[0]
+
+                    row_position = self.performance_table.rowCount()
+                    self.performance_table.insertRow(row_position)
+
+                    self.performance_table.setItem(row_position, 0, QTableWidgetItem(period_name))
+                    self.performance_table.setItem(row_position, 1, QTableWidgetItem(str(signal_count)))
+
+                    conf_item = QTableWidgetItem(f"{avg_confidence:.1f}%")
+                    if avg_confidence >= 80:
+                        conf_item.setForeground(QColor(0, 255, 136))
+                    elif avg_confidence >= 70:
+                        conf_item.setForeground(QColor(255, 255, 102))
+                    else:
+                        conf_item.setForeground(QColor(255, 165, 0))
+                    self.performance_table.setItem(row_position, 2, conf_item)
+
+                    self.performance_table.setItem(row_position, 3, QTableWidgetItem(best_signal_text))
+                    self.performance_table.setItem(row_position, 4,
+                        QTableWidgetItem(dominant_model.replace('_', ' ').title()))
+
+        except Exception as e:
+            print(f"Error updating performance table: {e}")
+
+
     # ===== ENHANCED EVENT HANDLERS =====
     
     def on_symbol_changed(self, symbol):
@@ -2117,102 +2288,6 @@ class BinanceTradingApp(QMainWindow):
         except Exception as e:
             print(f"Error adding ML signal: {e}")
     
-    def update_signal_analytics(self, signal_data):
-        """Update comprehensive signal analytics"""
-        try:
-            self.signal_performance.append(signal_data)
-            
-            if len(self.signal_performance) > 100:
-                self.signal_performance.pop(0)
-            
-            total_signals = len(self.signal_performance)
-            buy_signals = sum(1 for s in self.signal_performance if s['signal'] == 'BUY')
-            sell_signals = sum(1 for s in self.signal_performance if s['signal'] == 'SELL')
-            hold_signals = sum(1 for s in self.signal_performance if s['signal'] == 'HOLD')
-            
-            self.total_signals_label.setText(f"Total Signals: {total_signals}")
-            self.buy_signals_label.setText(f"Buy Signals: {buy_signals}")
-            self.sell_signals_label.setText(f"Sell Signals: {sell_signals}")
-            self.hold_signals_label.setText(f"Hold Signals: {hold_signals}")
-            
-            if buy_signals > sell_signals:
-                self.buy_signals_label.setStyleSheet("color: #00ff88; font-weight: bold;")
-                self.sell_signals_label.setStyleSheet("color: #ffffff; font-weight: normal;")
-            elif sell_signals > buy_signals:
-                self.sell_signals_label.setStyleSheet("color: #ff4444; font-weight: bold;")
-                self.buy_signals_label.setStyleSheet("color: #ffffff; font-weight: normal;")
-            else:
-                self.buy_signals_label.setStyleSheet("color: #ffffff; font-weight: normal;")
-                self.sell_signals_label.setStyleSheet("color: #ffffff; font-weight: normal;")
-            
-            self.hold_signals_label.setStyleSheet("color: #ffff66; font-weight: bold;")
-            
-            self.update_performance_table()
-            
-        except Exception as e:
-            print(f"Error updating signal analytics: {e}")
-    
-    def update_performance_table(self):
-        """Update performance table with time-based analysis"""
-        try:
-            if not self.signal_performance:
-                return
-            
-            self.performance_table.setRowCount(0)
-            
-            now = datetime.datetime.now()
-            time_periods = [
-                ("Last 5 minutes", 5),
-                ("Last 15 minutes", 15),
-                ("Last 30 minutes", 30),
-                ("Last 1 hour", 60),
-                ("Last 2 hours", 120)
-            ]
-            for period_name, minutes in time_periods:
-                cutoff_time = now - datetime.timedelta(minutes=minutes)
-                period_signals = [
-                    s for s in self.signal_performance
-                    if s['timestamp'] >= cutoff_time
-                ]
-                
-                if period_signals:
-                    signal_count = len(period_signals)
-                    avg_confidence = sum(s['confidence'] for s in period_signals) / signal_count
-                    
-                    # Find best signal (highest confidence)
-                    best_signal = max(period_signals, key=lambda x: x['confidence'])
-                    best_signal_text = f"{best_signal['signal']} ({best_signal['confidence']}%)"
-                    
-                    # Determine dominant model
-                    models = [s.get('model_type', 'Unknown') for s in period_signals]
-                    model_counts = {}
-                    for model in models:
-                        model_counts[model] = model_counts.get(model, 0) + 1
-                    dominant_model = max(model_counts.items(), key=lambda x: x[1])[0]
-                    
-                    # Add row to table with color coding
-                    row_position = self.performance_table.rowCount()
-                    self.performance_table.insertRow(row_position)
-                    
-                    self.performance_table.setItem(row_position, 0, QTableWidgetItem(period_name))
-                    self.performance_table.setItem(row_position, 1, QTableWidgetItem(str(signal_count)))
-                    
-                    # Color code confidence levels
-                    conf_item = QTableWidgetItem(f"{avg_confidence:.1f}%")
-                    if avg_confidence >= 80:
-                        conf_item.setForeground(QColor(0, 255, 136))
-                    elif avg_confidence >= 70:
-                        conf_item.setForeground(QColor(255, 255, 102))
-                    else:
-                        conf_item.setForeground(QColor(255, 165, 0))
-                    self.performance_table.setItem(row_position, 2, conf_item)
-                    
-                    self.performance_table.setItem(row_position, 3, QTableWidgetItem(best_signal_text))
-                    self.performance_table.setItem(row_position, 4, 
-                        QTableWidgetItem(dominant_model.replace('_', ' ').title()))
-                
-        except Exception as e:
-            print(f"Error updating performance table: {e}")
     
     # ===== COMPREHENSIVE ML SYSTEM MANAGEMENT =====
     
